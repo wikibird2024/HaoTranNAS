@@ -20,8 +20,8 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 | Sub-project folders | 🟢 |
 | Roadmap, decisions, conventions | 🟢 |
 | First commit + push | 🟢 |
-| Protocol spec v1 + vectors (`protocol/`) | 🟡 waiting for Hao's sign-off (freeze) |
-| Rust workspace + Flutter app scaffolds | 🟡 in progress |
+| Protocol spec v1 + vectors (`protocol/`) | 🟢 frozen, tag `protocol-v1` |
+| Rust workspace + Flutter app + NAS script scaffolds | 🟢 CI green |
 
 ## Milestones
 

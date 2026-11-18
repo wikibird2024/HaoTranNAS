@@ -1,6 +1,6 @@
 # HaoTranNAS protocol — version 1
 
-Author: Hao Tran · Status: Draft for freeze (tag `protocol-v1`) · 2026-11-18
+Author: Hao Tran · Status: **Frozen** (tag `protocol-v1`, approved by Hao Tran 2026-11-18)
 
 This file is the contract. The Rust codec (`core/`) and the Dart codec
 (`mobile/lib/protocol/`) are two independent implementations of it. The test
