@@ -12,7 +12,7 @@ use haotrannas_core::message::{DeviceEntry, DirEntry, DirEntryKind, Message};
 use haotrannas_core::path_rules::validate_path;
 use serde_json::Value;
 
-const EXPECTED_VALID_COUNT: usize = 37;
+const EXPECTED_VALID_COUNT: usize = 38;
 const EXPECTED_INVALID_COUNT: usize = 18;
 const EXPECTED_PATH_COUNT: usize = 20;
 const EXPECTED_CHUNKING_FILE_COUNT: usize = 6;

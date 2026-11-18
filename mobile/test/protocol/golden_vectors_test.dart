@@ -9,7 +9,7 @@ import 'package:haotrannas_mobile/protocol/messages.dart';
 
 import 'vector_files.dart';
 
-const expectedValidCount = 37;
+const expectedValidCount = 38;
 const expectedInvalidCount = 18;
 
 void main() {

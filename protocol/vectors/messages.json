@@ -38,6 +38,24 @@
    ]
   },
   {
+   "name": "hello_name_starts_with_bom",
+   "message": "Hello",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 1,
+    "client_software": "﻿bom-first",
+    "device_name": "﻿"
+   },
+   "frame_hex": [
+    "0000001b",
+    "0001",
+    "00000001",
+    "0001",
+    "000cefbbbf626f6d2d6669727374",
+    "0003efbbbf"
+   ]
+  },
+  {
    "name": "hello_name_at_max_length",
    "message": "Hello",
    "request_id": 1,
