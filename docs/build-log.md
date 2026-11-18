@@ -132,3 +132,38 @@ its checks passed again on `main`.
    three BOM bytes.
 2. Run `cargo test -p haotrannas-core --test golden_vectors -- --nocapture`
    and read why each invalid frame is rejected.
+
+## Wave 2 — M0: Ping works end to end (2026-11-18)
+
+```
+ Dart NasConnection ──TCP──► Rust server (dev-plain, 127.0.0.1)
+   Hello ─────────────────►  session: AwaitingHello → Ready (device 1)
+   ◄───────────────── HelloOk
+   Ping ──────────────────►
+   ◄──────────────────── Pong      ×3
+   Close ─────────────────►
+```
+
+| Part | What it does | Proof |
+|---|---|---|
+| Session state machine (core) | Which message is allowed in which state | Every one of 4 states × 22 message types checked against the spec table |
+| Server | Listener, one task per connection, timeouts, graceful shutdown, admin socket | 85 server tests (paused clock for timeouts) |
+| `cli ping` | Command-line client | `e2e/scripts/m0_ping.sh` prints Pong |
+| Dart `NasConnection` | Request ids, one-at-a-time queue, keepalive, typed failures | 27 tests with a scripted fake server |
+| **Cross check** | Dart client ⇄ Rust server over a real socket | `e2e/scripts/flutter_vs_server.sh`, now also a CI job (`cross`) |
+
+### Lessons from wave 2
+
+| What happened | Lesson |
+|---|---|
+| CI used a newer Rust than the PC and failed on new lint rules | Pin tool versions so "passes here" means "passes there" |
+| Pinning with `rust-toolchain.toml` made rustup download a second copy into a full disk | Check where a tool writes before adding it. The pin now lives only in CI |
+| Timeouts were tested with a paused clock (`tokio::time::pause`), not by waiting 60 s | Make time an input, then tests are fast and exact |
+| A dev shortcut (`--dev-plain`) is fenced in: loopback only, refuses a folder with real devices | Every shortcut needs a wall around it, written down (D-026) |
+
+### Exercise
+
+1. `cargo build --bins && e2e/scripts/m0_ping.sh` and read the output.
+2. Start a server yourself and send it garbage:
+   `printf 'hello' | nc 127.0.0.1 <port> | xxd` and decode the Error frame
+   you get back with `protocol/spec.md` §3 and §11 (hint: code 1).

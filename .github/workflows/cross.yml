@@ -1,0 +1,44 @@
+name: cross
+
+# The Dart client (mobile/) against the real Rust server (server/).
+# This is the end-to-end proof that the two implementations of
+# protocol/spec.md work together over a real socket.
+on:
+  push:
+    paths: &cross_paths
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "core/**"
+      - "server/**"
+      - "mobile/lib/**"
+      - "mobile/test/integration/**"
+      - "mobile/pubspec.*"
+      - "protocol/**"
+      - "e2e/scripts/**"
+      - ".github/workflows/cross.yml"
+  pull_request:
+    paths: *cross_paths
+
+jobs:
+  flutter-vs-server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Rust as rust.yml (pinned to the version on Hao's PC).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+
+      - name: Dart client against the Rust server
+        run: |
+          (cd mobile && flutter pub get)
+          e2e/scripts/flutter_vs_server.sh

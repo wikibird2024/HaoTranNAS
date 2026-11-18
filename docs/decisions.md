@@ -36,6 +36,7 @@ Rules:
 | D-022 | Device cert + key stored as app-private files, not secure storage | dart:io TLS needs raw key bytes; avoids a plugin in the background job | 🟡 | — |
 | D-023 | Admin Unix socket `<data_dir>/admin.sock` for pair, devices, scrub-now | A background service can't print a pairing code otherwise; tests use it | 🟢 | — |
 | D-024 | Config file at `/etc/haotrannas/config.toml`; default `pairing_networks` = 192.168.0.0/16 + 172.16.0.0/12 (no 10.0.0.0/8: it contains the WireGuard subnet); config rejects any overlap with 10.66.0.0/24 | Config is not data; pairing must stay LAN-only | 🟢 | — |
+| D-026 | Dev mode (`--dev-plain`, loopback only) uses a real `devices` row id 1 named `dev` with an all-zero cert hash; dev mode refuses a data folder that has real devices; TLS mode will refuse to start while the dev row exists | Uploads in M1/M2 need a real device row; no certificate hashes to all zeros, so no TLS client can ever match it | 🟢 | Wave 4 (TLS run) |
 | D-025 | Revoking a device never deletes its backups: `devices.revoked_at_ms` marks it, a revoked cert is refused like an unknown one; `remove_device` stays only for devices with no backups | A lost phone must be locked out while its photos stay restorable | 🟢 | — |
 
 ## Open questions

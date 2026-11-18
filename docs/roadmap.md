@@ -8,8 +8,7 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 
 ```
  Phase 0 ──► M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M6 ──► M7
-  done     ▲ HERE (wave 2)
-           wave 1 parts done: codecs (Rust + Dart), chunk store, catalog, TLS identity, config
+  done      done   ▲ HERE (wave 3: upload, resume, crash safety)
 ```
 
 ## Phase 0: foundation
@@ -30,7 +29,7 @@ been shown. Code alone doesn't count.
 
 | # | Goal | Sub-projects | You learn | Done when | Status |
 |---|---|---|---|---|---|
-| M0 | Frames + Hello/Ping over plain TCP | protocol, core, server, cli | Framing, state machine, async | Unit tests pass; `cli ping` gets `Pong` | ⚪ |
+| M0 | Frames + Hello/Ping over plain TCP | protocol, core, server, cli, mobile | Framing, state machine, async | Unit tests pass; `cli ping` gets `Pong`; Dart client pings the Rust server (`e2e/scripts/flutter_vs_server.sh`) | 🟢 2026-11-18 |
 | M1 | Upload one small file (no resume) | core, server, cli | Hashing | Server file hash = source file hash | ⚪ |
 | M2 | Chunks + NeedChunks + Commit | core, server, cli, e2e | Chunking, idempotency, atomicity | e2e test: kill connection mid-upload, resume works, no duplicate chunks | ⚪ |
 | M3 | Pairing + mutual TLS + mDNS | core, server, cli | Trust, certificates | Unpaired client refused; paired client works | ⚪ |
