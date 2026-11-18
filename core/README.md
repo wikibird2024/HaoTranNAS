@@ -10,4 +10,14 @@ Rust library shared by server, cli and desktop: framing, hashing, chunking, sess
 
 ## Build · Run · Test
 
-Not set up yet (planned: `cargo build`, `cargo test`).
+Run from the repo root (Cargo workspace).
+
+| Step | Command |
+|---|---|
+| Build | `cargo build -p haotrannas-core --all-features` |
+| Test | `cargo test -p haotrannas-core --all-features` |
+| Lint | `cargo clippy -p haotrannas-core --all-targets --all-features -- -D warnings` |
+
+Library only, nothing to run. Cargo features: `tokio` (async frame I/O,
+`io.rs`) and `tls` (rustls + ring, TLS 1.3 only, `tls.rs`). Server and cli
+turn both on.
