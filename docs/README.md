@@ -12,6 +12,7 @@ Author: Hao Tran · 2026-11-18
 | 4 | [decisions.md](decisions.md) | What did we decide, and why? |
 | 5 | [conventions.md](conventions.md) | Rules that keep every sub-project in the same shape |
 | 6 | [community-research.md](community-research.md) | Who else does this, and what we borrowed |
+| 7 | [build-log.md](build-log.md) | What was built in each wave, and why (the lessons) |
 
 ## One topic, one home
 
