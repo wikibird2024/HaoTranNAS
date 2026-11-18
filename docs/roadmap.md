@@ -19,8 +19,9 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 | Concepts, architecture, research docs | 🟢 |
 | Sub-project folders | 🟢 |
 | Roadmap, decisions, conventions | 🟢 |
-| First commit | ⚪ |
-| Import the Android app into `mobile/` with its history | 🔴 needs repo path (see decisions O-1) |
+| First commit + push | 🟢 |
+| Protocol spec v1 + vectors (`protocol/`) | 🟡 waiting for Hao's sign-off (freeze) |
+| Rust workspace + Flutter app scaffolds | 🟡 in progress |
 
 ## Milestones
 
@@ -34,7 +35,7 @@ been shown. Code alone doesn't count.
 | M2 | Chunks + NeedChunks + Commit | core, server, cli, e2e | Chunking, idempotency, atomicity | e2e test: kill connection mid-upload, resume works, no duplicate chunks | ⚪ |
 | M3 | Pairing + mutual TLS + mDNS | core, server, cli | Trust, certificates | Unpaired client refused; paired client works | ⚪ |
 | M3n | NAS host ready | nas | Linux admin, ZFS | Server runs as a service on the NAS; survives reboot | ⚪ |
-| M4 | Android auto-backup | mobile | Android background work | New photo appears on server without a tap | ⚪ |
+| M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | ⚪ |
 | M5 | Browse + download | server, mobile, cli | Read path | Restore a photo to the phone; hash matches | ⚪ |
 | M6 | Remote + upkeep: WireGuard, scrub, cleanup | nas, server | Networking, data care | Backup works on 4G; scrub report clean | ⚪ |
 | M7 | Desktop app | desktop, core | Reusing core | PC folder backed up and restored | ⚪ |
@@ -62,6 +63,7 @@ Don't start these before the trigger happens. This list stops scope creep.
 | Pack small chunks into pack files | restic | Chunk count passes ~1 million |
 | Offsite copy of the store | restic | M6 done |
 | End-to-end encryption | Ente | The server ever leaves home |
-| Rust core inside Android (uniffi) | — | Kotlin and Rust protocol code drift apart |
+| Rust core inside the phone app (flutter_rust_bridge) | — | Dart and Rust codecs drift apart despite the vectors |
+| QR-code or PAKE pairing; phone-made key + CSR | Syncthing, Signal | Pairing outside a trusted home LAN |
 | Web UI | Immich | M7 done and still wanted |
 | Photo search / AI | Immich | Never in this project; use Immich if needed |

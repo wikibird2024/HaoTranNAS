@@ -4,10 +4,16 @@ The contract between every part: message definitions, frame layout, protocol spe
 
 | | |
 |---|---|
-| Owns | `haotrannas.proto`, `spec.md` |
+| Owns | `spec.md` (the contract), `vectors/*.json`, `tools/gen_vectors.py` |
 | First milestone | M0 |
 | Rules | [docs/conventions.md](../docs/conventions.md) |
 
 ## Build · Run · Test
 
-Nothing yet. Code is generated from `haotrannas.proto` by `core` (prost) and `mobile` (protobuf-kotlin).
+```bash
+python3 protocol/tools/gen_vectors.py   # regenerate vectors
+git diff --exit-code protocol/vectors  # must be empty unless spec.md changed
+```
+
+No code is generated. `core/` (Rust) and `mobile/lib/protocol/` (Dart) are
+hand-written and both tested against `vectors/`.

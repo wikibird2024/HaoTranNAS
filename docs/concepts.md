@@ -130,8 +130,8 @@ copies or a mix of old and new data.
 ### 3.6 State machine: only certain messages are allowed at each moment
 
 ```
- Connected ──Hello──► Greeted ──cert ok──► Ready ──(requests)──┐
-                                             ▲─────────────────┘
+ AwaitingHello ──Hello + cert ok──► Ready ──(requests)──┐
+                                     ▲───────────────────┘
  anything unexpected ──► Closed
 ```
 
@@ -154,7 +154,7 @@ task sleeps while it waits for the network.
 ```
  TLS = lock (nobody can read) + ID card (certificate)
 
- Pairing (once, at home):  phone ⇄ server swap ID-card fingerprints
+ Pairing (once, at home):  server gives the phone its own ID card; phone remembers the server's
  Every connection after:   "show your card" ── matches? ──► talk
 ```
 

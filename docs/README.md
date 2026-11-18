@@ -24,5 +24,5 @@ Each fact lives in exactly one place. Other docs link to it instead of copying i
 | Plan and status | `docs/roadmap.md` |
 | Decisions | `docs/decisions.md` |
 | Working rules | `docs/conventions.md` |
-| Wire format and messages | `protocol/` (`.proto` file + spec) |
+| Wire format and messages | `protocol/spec.md` + `protocol/vectors/` |
 | How to build / run / test a part | `<sub-project>/README.md` |

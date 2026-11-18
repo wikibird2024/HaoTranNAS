@@ -1,0 +1,938 @@
+{
+ "protocol_version": 1,
+ "valid": [
+  {
+   "name": "hello_basic",
+   "message": "Hello",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 1,
+    "client_software": "haotrannas-cli/0.1.0",
+    "device_name": "pixel-7"
+   },
+   "frame_hex": [
+    "00000027",
+    "0001",
+    "00000001",
+    "0001",
+    "001468616f7472616e6e61732d636c692f302e312e30",
+    "0007706978656c2d37"
+   ]
+  },
+  {
+   "name": "hello_vietnamese_name",
+   "message": "Hello",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 1,
+    "client_software": "haotrannas-mobile/0.1.0",
+    "device_name": "Điện thoại của Hào"
+   },
+   "frame_hex": [
+    "0000003d",
+    "0001",
+    "00000001",
+    "0001",
+    "001768616f7472616e6e61732d6d6f62696c652f302e312e30",
+    "001ac49069e1bb876e2074686fe1baa1692063e1bba7612048c3a06f"
+   ]
+  },
+  {
+   "name": "hello_name_at_max_length",
+   "message": "Hello",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 1,
+    "client_software": "",
+    "device_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+   },
+   "frame_hex": [
+    "0000004c",
+    "0001",
+    "00000001",
+    "0001",
+    "0000",
+    "00406e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e"
+   ]
+  },
+  {
+   "name": "hello_ok_unpaired",
+   "message": "HelloOk",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 1,
+    "server_software": "haotrannas-server/0.1.0",
+    "server_name": "home-nas",
+    "device_id": "0",
+    "chunk_size_bytes": 1048576,
+    "max_frame_length_bytes": 4194304
+   },
+   "frame_hex": [
+    "0000003b",
+    "0002",
+    "00000001",
+    "0001",
+    "001768616f7472616e6e61732d7365727665722f302e312e30",
+    "0008686f6d652d6e6173",
+    "0000000000000000",
+    "00100000",
+    "00400000"
+   ]
+  },
+  {
+   "name": "hello_ok_paired",
+   "message": "HelloOk",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 1,
+    "server_software": "haotrannas-server/0.1.0",
+    "server_name": "home-nas",
+    "device_id": "7",
+    "chunk_size_bytes": 1048576,
+    "max_frame_length_bytes": 4194304
+   },
+   "frame_hex": [
+    "0000003b",
+    "0002",
+    "00000001",
+    "0001",
+    "001768616f7472616e6e61732d7365727665722f302e312e30",
+    "0008686f6d652d6e6173",
+    "0000000000000007",
+    "00100000",
+    "00400000"
+   ]
+  },
+  {
+   "name": "ping",
+   "message": "Ping",
+   "request_id": 2,
+   "fields": {},
+   "frame_hex": [
+    "00000006",
+    "0003",
+    "00000002"
+   ]
+  },
+  {
+   "name": "pong",
+   "message": "Pong",
+   "request_id": 2,
+   "fields": {},
+   "frame_hex": [
+    "00000006",
+    "0004",
+    "00000002"
+   ]
+  },
+  {
+   "name": "ping_request_id_max",
+   "message": "Ping",
+   "request_id": 4294967295,
+   "fields": {},
+   "frame_hex": [
+    "00000006",
+    "0003",
+    "ffffffff"
+   ]
+  },
+  {
+   "name": "pair_request",
+   "message": "PairRequest",
+   "request_id": 3,
+   "fields": {
+    "code": "482913"
+   },
+   "frame_hex": [
+    "0000000e",
+    "0101",
+    "00000003",
+    "0006343832393133"
+   ]
+  },
+  {
+   "name": "pair_ok",
+   "message": "PairOk",
+   "request_id": 3,
+   "fields": {
+    "device_id": "7",
+    "device_cert_der": "3082010a0201",
+    "device_key_pkcs8_der": "308187020100",
+    "server_cert_sha256": "728ec949704fa254b9ac0c18b57525b2bb46369b5e08b2d84de460bb505b8b04"
+   },
+   "frame_hex": [
+    "00000042",
+    "0102",
+    "00000003",
+    "0000000000000007",
+    "000000063082010a0201",
+    "00000006308187020100",
+    "728ec949704fa254b9ac0c18b57525b2bb46369b5e08b2d84de460bb505b8b04"
+   ]
+  },
+  {
+   "name": "file_offer_three_mib",
+   "message": "FileOffer",
+   "request_id": 5,
+   "fields": {
+    "path": "DCIM/Camera/IMG_0001.jpg",
+    "size_bytes": "3145745",
+    "modified_time_ms": "1731916800000",
+    "file_sha256": "fe2aaf82bfa2ffec207a0c6fa7ce7d4af268d67e2672fdaec675f3f9b65d0854",
+    "chunk_hashes": [
+     "631b84027d6b9e52b539c4e8373622d23032dfadc64d60af87339c9037e4f769",
+     "729b9155f00261a681000ccd0ff20e750ed3d525b5b1e6fc961837a3bb666fd6",
+     "c85ef98b88946506e2c5488c04b97d86b5ec214add104d4849a3145f5e49fd65",
+     "110451ed998e613ec192a0e80f5682e110082d972980723b67aa3b6971af2f0e"
+    ]
+   },
+   "frame_hex": [
+    "000000d4",
+    "0201",
+    "00000005",
+    "00184443494d2f43616d6572612f494d475f303030312e6a7067",
+    "0000000000300011",
+    "000001933e492000",
+    "fe2aaf82bfa2ffec207a0c6fa7ce7d4af268d67e2672fdaec675f3f9b65d0854",
+    "00000004",
+    "631b84027d6b9e52b539c4e8373622d23032dfadc64d60af87339c9037e4f769",
+    "729b9155f00261a681000ccd0ff20e750ed3d525b5b1e6fc961837a3bb666fd6",
+    "c85ef98b88946506e2c5488c04b97d86b5ec214add104d4849a3145f5e49fd65",
+    "110451ed998e613ec192a0e80f5682e110082d972980723b67aa3b6971af2f0e"
+   ]
+  },
+  {
+   "name": "file_offer_empty_file_negative_time",
+   "message": "FileOffer",
+   "request_id": 5,
+   "fields": {
+    "path": "notes/empty.txt",
+    "size_bytes": "0",
+    "modified_time_ms": "-1000",
+    "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "chunk_hashes": []
+   },
+   "frame_hex": [
+    "0000004b",
+    "0201",
+    "00000005",
+    "000f6e6f7465732f656d7074792e747874",
+    "0000000000000000",
+    "fffffffffffffc18",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "00000000"
+   ]
+  },
+  {
+   "name": "file_offer_emoji_path",
+   "message": "FileOffer",
+   "request_id": 5,
+   "fields": {
+    "path": "Ảnh/📷 bãi biển.jpg",
+    "size_bytes": "5",
+    "modified_time_ms": "0",
+    "file_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "chunk_hashes": [
+     "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    ]
+   },
+   "frame_hex": [
+    "00000076",
+    "0201",
+    "00000005",
+    "001ae1baa26e682ff09f93b72062c3a369206269e1bb836e2e6a7067",
+    "0000000000000005",
+    "0000000000000000",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "00000001",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+   ]
+  },
+  {
+   "name": "need_chunks_some_missing",
+   "message": "NeedChunks",
+   "request_id": 5,
+   "fields": {
+    "upload_id": "1234567890123",
+    "existing_version_id": "0",
+    "missing_indexes": [
+     0,
+     2
+    ]
+   },
+   "frame_hex": [
+    "00000022",
+    "0202",
+    "00000005",
+    "0000011f71fb04cb",
+    "0000000000000000",
+    "00000002",
+    "00000000",
+    "00000002"
+   ]
+  },
+  {
+   "name": "need_chunks_already_backed_up",
+   "message": "NeedChunks",
+   "request_id": 5,
+   "fields": {
+    "upload_id": "0",
+    "existing_version_id": "42",
+    "missing_indexes": []
+   },
+   "frame_hex": [
+    "0000001a",
+    "0202",
+    "00000005",
+    "0000000000000000",
+    "000000000000002a",
+    "00000000"
+   ]
+  },
+  {
+   "name": "chunk_data_small",
+   "message": "ChunkData",
+   "request_id": 7,
+   "fields": {
+    "upload_id": "1234567890123",
+    "chunk_index": 3,
+    "chunk_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "data": "68656c6c6f"
+   },
+   "frame_hex": [
+    "0000003b",
+    "0203",
+    "00000007",
+    "0000011f71fb04cb",
+    "00000003",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "0000000568656c6c6f"
+   ]
+  },
+  {
+   "name": "chunk_data_empty",
+   "message": "ChunkData",
+   "request_id": 7,
+   "fields": {
+    "upload_id": "1",
+    "chunk_index": 0,
+    "chunk_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "data": ""
+   },
+   "frame_hex": [
+    "00000036",
+    "0203",
+    "00000007",
+    "0000000000000001",
+    "00000000",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "00000000"
+   ]
+  },
+  {
+   "name": "chunk_ok",
+   "message": "ChunkOk",
+   "request_id": 7,
+   "fields": {
+    "chunk_index": 3,
+    "chunk_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+   },
+   "frame_hex": [
+    "0000002a",
+    "0204",
+    "00000007",
+    "00000003",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+   ]
+  },
+  {
+   "name": "commit",
+   "message": "Commit",
+   "request_id": 9,
+   "fields": {
+    "upload_id": "1234567890123"
+   },
+   "frame_hex": [
+    "0000000e",
+    "0205",
+    "00000009",
+    "0000011f71fb04cb"
+   ]
+  },
+  {
+   "name": "commit_ok",
+   "message": "CommitOk",
+   "request_id": 9,
+   "fields": {
+    "version_id": "42"
+   },
+   "frame_hex": [
+    "0000000e",
+    "0206",
+    "00000009",
+    "000000000000002a"
+   ]
+  },
+  {
+   "name": "commit_ok_u64_max",
+   "message": "CommitOk",
+   "request_id": 9,
+   "fields": {
+    "version_id": "9223372036854775807"
+   },
+   "frame_hex": [
+    "0000000e",
+    "0206",
+    "00000009",
+    "7fffffffffffffff"
+   ]
+  },
+  {
+   "name": "list_devices",
+   "message": "ListDevices",
+   "request_id": 11,
+   "fields": {},
+   "frame_hex": [
+    "00000006",
+    "0301",
+    "0000000b"
+   ]
+  },
+  {
+   "name": "device_list_two",
+   "message": "DeviceList",
+   "request_id": 11,
+   "fields": {
+    "devices": [
+     {
+      "device_id": "7",
+      "name": "pixel-7",
+      "paired_at_ms": "1731916800000",
+      "is_caller": true
+     },
+     {
+      "device_id": "8",
+      "name": "old-phone",
+      "paired_at_ms": "1700000000000",
+      "is_caller": false
+     }
+    ]
+   },
+   "frame_hex": [
+    "00000040",
+    "0302",
+    "0000000b",
+    "00000002",
+    "0000000000000007",
+    "0007706978656c2d37",
+    "000001933e492000",
+    "01",
+    "0000000000000008",
+    "00096f6c642d70686f6e65",
+    "0000018bcfe56800",
+    "00"
+   ]
+  },
+  {
+   "name": "device_list_empty",
+   "message": "DeviceList",
+   "request_id": 11,
+   "fields": {
+    "devices": []
+   },
+   "frame_hex": [
+    "0000000a",
+    "0302",
+    "0000000b",
+    "00000000"
+   ]
+  },
+  {
+   "name": "list_dir_root",
+   "message": "ListDir",
+   "request_id": 13,
+   "fields": {
+    "device_id": "0",
+    "path": "",
+    "start_after": "",
+    "max_entries": 1000
+   },
+   "frame_hex": [
+    "00000016",
+    "0303",
+    "0000000d",
+    "0000000000000000",
+    "0000",
+    "0000",
+    "000003e8"
+   ]
+  },
+  {
+   "name": "list_dir_page_two",
+   "message": "ListDir",
+   "request_id": 13,
+   "fields": {
+    "device_id": "7",
+    "path": "DCIM/Camera",
+    "start_after": "IMG_0001.jpg",
+    "max_entries": 50
+   },
+   "frame_hex": [
+    "0000002d",
+    "0303",
+    "0000000d",
+    "0000000000000007",
+    "000b4443494d2f43616d657261",
+    "000c494d475f303030312e6a7067",
+    "00000032"
+   ]
+  },
+  {
+   "name": "dir_entries_mixed",
+   "message": "DirEntries",
+   "request_id": 13,
+   "fields": {
+    "entries": [
+     {
+      "name": "Camera",
+      "kind": 1,
+      "size_bytes": "0",
+      "modified_time_ms": "0",
+      "version_id": "0"
+     },
+     {
+      "name": "IMG_0001.jpg",
+      "kind": 2,
+      "size_bytes": "3145745",
+      "modified_time_ms": "1731916800000",
+      "version_id": "42"
+     }
+    ],
+    "has_more": false
+   },
+   "frame_hex": [
+    "00000053",
+    "0304",
+    "0000000d",
+    "00000002",
+    "000643616d657261",
+    "01",
+    "0000000000000000",
+    "0000000000000000",
+    "0000000000000000",
+    "000c494d475f303030312e6a7067",
+    "02",
+    "0000000000300011",
+    "000001933e492000",
+    "000000000000002a",
+    "00"
+   ]
+  },
+  {
+   "name": "dir_entries_empty_more",
+   "message": "DirEntries",
+   "request_id": 13,
+   "fields": {
+    "entries": [],
+    "has_more": true
+   },
+   "frame_hex": [
+    "0000000b",
+    "0304",
+    "0000000d",
+    "00000000",
+    "01"
+   ]
+  },
+  {
+   "name": "read_file_latest",
+   "message": "ReadFile",
+   "request_id": 15,
+   "fields": {
+    "device_id": "0",
+    "path": "DCIM/Camera/IMG_0001.jpg",
+    "version_id": "0"
+   },
+   "frame_hex": [
+    "00000030",
+    "0401",
+    "0000000f",
+    "0000000000000000",
+    "00184443494d2f43616d6572612f494d475f303030312e6a7067",
+    "0000000000000000"
+   ]
+  },
+  {
+   "name": "read_file_long_path",
+   "message": "ReadFile",
+   "request_id": 15,
+   "fields": {
+    "device_id": "7",
+    "path": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/e",
+    "version_id": "42"
+   },
+   "frame_hex": [
+    "00000418",
+    "0401",
+    "0000000f",
+    "0000000000000007",
+    "04006161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f6262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262622f6363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363632f64646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464646464642f65",
+    "000000000000002a"
+   ]
+  },
+  {
+   "name": "file_manifest",
+   "message": "FileManifest",
+   "request_id": 15,
+   "fields": {
+    "version_id": "42",
+    "size_bytes": "3145745",
+    "modified_time_ms": "-9223372036854775808",
+    "file_sha256": "fe2aaf82bfa2ffec207a0c6fa7ce7d4af268d67e2672fdaec675f3f9b65d0854",
+    "chunk_hashes": [
+     "631b84027d6b9e52b539c4e8373622d23032dfadc64d60af87339c9037e4f769",
+     "729b9155f00261a681000ccd0ff20e750ed3d525b5b1e6fc961837a3bb666fd6",
+     "c85ef98b88946506e2c5488c04b97d86b5ec214add104d4849a3145f5e49fd65",
+     "110451ed998e613ec192a0e80f5682e110082d972980723b67aa3b6971af2f0e"
+    ]
+   },
+   "frame_hex": [
+    "000000c2",
+    "0402",
+    "0000000f",
+    "000000000000002a",
+    "0000000000300011",
+    "8000000000000000",
+    "fe2aaf82bfa2ffec207a0c6fa7ce7d4af268d67e2672fdaec675f3f9b65d0854",
+    "00000004",
+    "631b84027d6b9e52b539c4e8373622d23032dfadc64d60af87339c9037e4f769",
+    "729b9155f00261a681000ccd0ff20e750ed3d525b5b1e6fc961837a3bb666fd6",
+    "c85ef98b88946506e2c5488c04b97d86b5ec214add104d4849a3145f5e49fd65",
+    "110451ed998e613ec192a0e80f5682e110082d972980723b67aa3b6971af2f0e"
+   ]
+  },
+  {
+   "name": "read_chunk",
+   "message": "ReadChunk",
+   "request_id": 17,
+   "fields": {
+    "chunk_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+   },
+   "frame_hex": [
+    "00000026",
+    "0403",
+    "00000011",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+   ]
+  },
+  {
+   "name": "chunk_content",
+   "message": "ChunkContent",
+   "request_id": 17,
+   "fields": {
+    "chunk_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "data": "68656c6c6f"
+   },
+   "frame_hex": [
+    "0000002f",
+    "0404",
+    "00000011",
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "0000000568656c6c6f"
+   ]
+  },
+  {
+   "name": "close_normal",
+   "message": "Close",
+   "request_id": 0,
+   "fields": {
+    "reason": 0,
+    "message": ""
+   },
+   "frame_hex": [
+    "0000000a",
+    "00f0",
+    "00000000",
+    "0000",
+    "0000"
+   ]
+  },
+  {
+   "name": "close_paired_reconnect",
+   "message": "Close",
+   "request_id": 0,
+   "fields": {
+    "reason": 5,
+    "message": "paired, reconnect with your certificate"
+   },
+   "frame_hex": [
+    "00000031",
+    "00f0",
+    "00000000",
+    "0005",
+    "00277061697265642c207265636f6e6e656374207769746820796f7572206365727469666963617465"
+   ]
+  },
+  {
+   "name": "error_unknown_upload",
+   "message": "Error",
+   "request_id": 9,
+   "fields": {
+    "code": 25,
+    "message": "unknown upload"
+   },
+   "frame_hex": [
+    "00000018",
+    "00ff",
+    "00000009",
+    "0019",
+    "000e756e6b6e6f776e2075706c6f6164"
+   ]
+  },
+  {
+   "name": "error_unknown_code",
+   "message": "Error",
+   "request_id": 9,
+   "fields": {
+    "code": 999,
+    "message": "from a newer server"
+   },
+   "frame_hex": [
+    "0000001d",
+    "00ff",
+    "00000009",
+    "03e7",
+    "001366726f6d2061206e6577657220736572766572"
+   ]
+  }
+ ],
+ "invalid": [
+  {
+   "name": "length_zero",
+   "frame_hex": [
+    "00000000"
+   ],
+   "stage": "header",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "length_bytes 0 is below 6"
+  },
+  {
+   "name": "length_five",
+   "frame_hex": [
+    "00000005",
+    "0003",
+    "000000"
+   ],
+   "stage": "header",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "length_bytes 5 is below 6"
+  },
+  {
+   "name": "length_over_max",
+   "frame_hex": [
+    "00400001"
+   ],
+   "stage": "header",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "length_bytes above 4 MiB, rejected from the header alone"
+  },
+  {
+   "name": "type_zero",
+   "frame_hex": [
+    "00000006",
+    "0000",
+    "00000001"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "message type 0"
+  },
+  {
+   "name": "type_unknown",
+   "frame_hex": [
+    "00000006",
+    "0999",
+    "00000001"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "unknown message type"
+  },
+  {
+   "name": "ping_trailing_byte",
+   "frame_hex": [
+    "00000007",
+    "0003",
+    "00000001",
+    "00"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "Ping has an empty payload"
+  },
+  {
+   "name": "hello_truncated",
+   "frame_hex": [
+    "00000008",
+    "0001",
+    "00000001",
+    "0001"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "payload ends before client_software"
+  },
+  {
+   "name": "hello_string_length_past_end",
+   "frame_hex": [
+    "0000000d",
+    "0001",
+    "00000001",
+    "0001",
+    "00ff616263"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "string length 255 but only 3 bytes left"
+  },
+  {
+   "name": "hello_invalid_utf8",
+   "frame_hex": [
+    "0000000d",
+    "0001",
+    "00000001",
+    "0001",
+    "0000",
+    "0001ff"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "0xff is never valid UTF-8"
+  },
+  {
+   "name": "hello_utf8_surrogate",
+   "frame_hex": [
+    "0000000f",
+    "0001",
+    "00000001",
+    "0001",
+    "0000",
+    "0003eda080"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "encoded surrogate U+D800"
+  },
+  {
+   "name": "hello_utf8_overlong",
+   "frame_hex": [
+    "0000000e",
+    "0001",
+    "00000001",
+    "0001",
+    "0000",
+    "0002c0af"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "overlong encoding of '/'"
+  },
+  {
+   "name": "hello_name_too_long",
+   "frame_hex": [
+    "0000004d",
+    "0001",
+    "00000001",
+    "0001",
+    "0000",
+    "00416e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "device_name longer than 64 bytes"
+  },
+  {
+   "name": "commit_ok_u64_top_bit",
+   "frame_hex": [
+    "0000000e",
+    "0206",
+    "00000001",
+    "8000000000000000"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "u64 must be < 2^63"
+  },
+  {
+   "name": "dir_entries_bool_two",
+   "frame_hex": [
+    "0000000b",
+    "0304",
+    "00000001",
+    "00000000",
+    "02"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "bool must be 0 or 1"
+  },
+  {
+   "name": "dir_entries_kind_three",
+   "frame_hex": [
+    "00000027",
+    "0304",
+    "00000001",
+    "00000001",
+    "000178",
+    "03",
+    "0000000000000000",
+    "0000000000000000",
+    "0000000000000000",
+    "00"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "kind must be 1 or 2"
+  },
+  {
+   "name": "need_chunks_count_past_end",
+   "frame_hex": [
+    "0000001a",
+    "0202",
+    "00000001",
+    "0000000000000001",
+    "0000000000000000",
+    "ffffffff"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "list count larger than the bytes left"
+  },
+  {
+   "name": "read_chunk_short_hash",
+   "frame_hex": [
+    "00000025",
+    "0403",
+    "00000001",
+    "00000000000000000000000000000000000000000000000000000000000000"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "hash needs 32 bytes"
+  },
+  {
+   "name": "close_trailing_bytes",
+   "frame_hex": [
+    "0000000c",
+    "00f0",
+    "00000001",
+    "0000",
+    "0000",
+    "0000"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "bytes left after the last field"
+  }
+ ]
+}

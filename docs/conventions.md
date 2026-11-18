@@ -9,12 +9,12 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
 
 | Folder | Owns | Must NOT |
 |---|---|---|
-| `protocol/` | Message definitions (`.proto`), frame layout, protocol spec | Contain code beyond generated output |
+| `protocol/` | `spec.md`, test vectors, the vector generator script | Contain app code |
 | `core/` | Framing, hashing, chunking, session state, TLS setup (Rust library) | Know about SQLite, disks paths or a UI |
 | `server/` | Listener, handlers, chunk store, catalog, background jobs | Contain protocol logic that belongs in `core` |
 | `cli/` | Command-line client for testing and scripting | Have features the server doesn't support yet |
 | `desktop/` | PC app (M7) | Re-implement anything `core` has |
-| `mobile/` | Android app | Change the wire format without changing `protocol/` first |
+| `mobile/` | Flutter phone app | Change the wire format without changing `protocol/` first |
 | `nas/` | Host setup: ZFS, WireGuard, systemd, config, backup scripts | Contain application code |
 | `e2e/` | End-to-end tests: cli ⇄ server | Depend on a real phone |
 
@@ -42,10 +42,12 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
 
 | Rule | Why |
 |---|---|
-| Change the `.proto` file first, then the code | It is the contract |
-| Never reuse or renumber a protobuf field | Old clients would misread data |
-| Breaking change → bump `protocolVersion` | `Hello` rejects mismatched peers cleanly |
-| Every new message gets an e2e test | Proves both sides agree |
+| Change `spec.md` first, regenerate vectors, then the code | It is the contract |
+| Never reuse or renumber a message type, error code or close reason | Old clients would misread data |
+| Any change to the bytes → bump `PROTOCOL_VERSION` | `Hello` rejects mismatched peers cleanly |
+| Every message has vectors that both Rust and Dart pass | Proves both codecs agree byte for byte |
+| Code and spec disagree → the spec wins | Never "fix" a vector to match code |
+| Every new message gets an e2e test | Proves the whole path works |
 
 ## 4. Data safety rules (never weaken without asking Hao)
 
@@ -64,7 +66,7 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
 | Plain words that say what the thing is | `chunk_store`, not `cs` |
 | Units in the name | `idle_timeout_ms`, `size_bytes`, `max_frame_bytes` |
 | No one- or two-letter names | `chunk_hash`, not `h` |
-| Casing follows the language | Rust and proto: `snake_case` · Kotlin: `camelCase` · types: `PascalCase` |
+| Casing follows the language | Rust: `snake_case` · Dart: `lowerCamelCase`, files `snake_case.dart` · types: `PascalCase` |
 
 ## 6. Done means checked
 

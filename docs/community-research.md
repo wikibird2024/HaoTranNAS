@@ -46,7 +46,7 @@ discovery, and the one-repo layout.
 |---|---|---|
 | Hash the content, server says what it lacks | Syncthing (blocks), Immich (`/assets/bulk-upload-check`), restic | 🟢 FileOffer → NeedChunks |
 | Content-addressed storage | restic, kopia, borg, git | 🟢 `chunks/ab/cd/<sha256>` |
-| Protocol schema in one file | Syncthing `proto/bep/bep.proto`, Immich `open-api/` | 🟢 `protocol/*.proto` |
+| Protocol schema in one file | Syncthing `proto/bep/bep.proto`, Immich `open-api/` | 🟢 `protocol/spec.md` + vectors (hand-written binary, D-017) |
 | One repo: server + mobile + web + docs | Immich, Ente, LocalSend | 🟢 our layout (section 5) |
 | TLS everywhere, no open port | Syncthing, LocalSend (HTTPS) | 🟢 TLS + WireGuard |
 
