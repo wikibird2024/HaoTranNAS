@@ -24,8 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to the Rust on Hao's PC (`rustc --version`), so "passes locally"
+      # means "passes in CI". A newer stable once failed CI with new clippy
+      # lints. Upgrade on purpose: update the PC, change this, run all checks.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98.1"
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
