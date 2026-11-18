@@ -22,8 +22,31 @@ Rules kept from Protocol Lab: codec = pure (no I/O), Link = I/O, screens =
 glue; decoders never throw on bad bytes; byte formats are hand-written;
 check a package's license before adding it.
 
-Status: scaffold. `lib/protocol/limits.dart` and `lib/core/` are real; the
-other files are documented skeletons.
+Status: `lib/protocol/`, `lib/core/` and in `lib/client/` the connection,
+chunker and upload engine are real; the other files are documented
+skeletons.
+
+## Upload (spec §8)
+
+```
+ UploadEngine.upload(localPath, remotePath, modifiedTimeMs)
+   path rules ─► chunkFile (isolate, 1 MiB reads) ─► FileOffer
+   NeedChunks: existing version → alreadyBackedUp (nothing sent)
+               else each missing chunk: read + re-hash ─► ChunkData ─► ChunkOk
+   Commit ─► CommitOk → uploaded      CHUNKS_MISSING → offer again (max 3)
+```
+
+| Result | Meaning |
+|---|---|
+| `UploadUploaded` | Committed; `chunksSent` = what this call sent |
+| `UploadAlreadyBackedUp` | Same path, size, time and content already on the server |
+| `UploadCancelled` | `UploadCancel.cancel()` between chunks; not committed |
+| `UploadFailed(kind)` | `badPath`, `tooLarge`, `diskFull`, `fileChangedDuringUpload`, `fileUnreadable`, `chunksStillMissing`, `badReply`, `serverRejected`, `connectionLost`; not committed |
+
+`upload()` never throws for file, server or network problems. Resume = call
+`upload()` again: the server only asks for the chunks it lacks. A chunk
+whose bytes no longer match the offered hash stops the upload before it is
+sent (no Commit).
 
 ## Build
 
@@ -63,12 +86,18 @@ flutter test --tags mdns                       # needs a real LAN with multicast
 |---|---|---|
 | `test/protocol/` | Codec against the golden vectors, fuzz | nothing |
 | `test/client/nas_connection_test.dart` | Handshake, request ids, queue, timeouts, keepalive, failures, log redaction; a scripted fake server on `FakeLink` (`test/client/fake_server.dart`) | nothing |
+| `test/client/chunker_test.dart` | Chunk hashes, file SHA-256 and `readChunk` against `protocol/vectors/chunking.json`; size helpers | nothing |
+| `test/client/upload_engine_test.dart` | Upload flow on a fake server with a chunk store (`fake_upload_server.dart`): order, dedup, already backed up, resume, cancel, re-offer, file changed, bad replies, typed errors, progress | nothing |
 | `test/integration/server_ping_test.dart` (tag `server`) | Hello → HelloOk(device 1) → 3 pings → Close over real TCP | a dev server; skipped when `NAS_SERVER_ADDR` is not set |
+| `test/integration/server_upload_test.dart` (tag `server`) | 3 MiB + 17 B upload, re-upload = already backed up, resume after cancel sends 3 of 5 chunks, same content at a new path sends 0; `haotrannas-server restore` gives the same bytes | a dev server (`NAS_SERVER_ADDR`); the restore check also needs `NAS_SERVER_BIN` and `NAS_DATA_DIR` |
 
 Against a real server (dev mode, plain TCP on 127.0.0.1):
 
 ```bash
 NAS_SERVER_ADDR=127.0.0.1:47100 flutter test --tags server
+# plus the restore check (server binary and its --data-dir):
+NAS_SERVER_ADDR=127.0.0.1:47100 NAS_SERVER_BIN=../target/debug/haotrannas-server \
+  NAS_DATA_DIR=/tmp/htn-dev flutter test --tags server
 ```
 
 ## Phone-only checks (manual)
