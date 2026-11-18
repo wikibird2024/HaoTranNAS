@@ -26,7 +26,7 @@ real hardware yet** (hardware still open, decisions O-3). See the last section.
 |---|---|---|---|
 | 1 | Install the OS | Debian/Ubuntu installer | ⚪ |
 | 2 | ZFS mirror | `scripts/zfs_mirror_setup.sh` | ⚪ |
-| 3 | Install the server | systemd unit (task C1) | ⚪ not written yet |
+| 3 | Install the server | `scripts/install.sh` + `systemd/haotrannas-server.service` | ⚪ |
 | 4 | Firewall | `firewall/haotrannas.nft` | ⚪ |
 | 5 | WireGuard on the NAS | `scripts/wireguard_keys.sh` + `wireguard/wg0.conf.example` | ⚪ |
 | 6 | Router port-forward | UDP 51820 only | ⚪ |
@@ -76,11 +76,66 @@ with its own monthly scrub. Keep one: `cat /etc/cron.d/zfsutils-linux`.
 
 ## 3. Install the server
 
-Placeholder. The systemd unit and `config.toml` come in task C1.
+```
+ binary ─► install.sh ─► user haotrannas ─► /usr/local/bin ─► /etc/haotrannas/config.toml
+                         /srv/haotrannas (0700) ─► unit enabled ─► init ─► start
+```
+
+Needs step 2 done: `/srv/haotrannas` must exist (the script never creates it,
+so backups cannot land on the OS disk by mistake).
+
+Build the binary (on the NAS, or on a PC with the same CPU type), then dry run
+first, then the real run:
+
+```
+cargo build --release -p haotrannas-server
+nas/scripts/install.sh --dry-run target/release/haotrannas-server
+sudo nas/scripts/install.sh      target/release/haotrannas-server
+```
+
+| The script | |
+|---|---|
+| Creates | System user + group `haotrannas`: no login, no home |
+| Installs | `/usr/local/bin/haotrannas-server` (0755) |
+| Installs | `/etc/haotrannas/config.toml` (0640, root:haotrannas) from `nas/config.example.toml`, **only if missing**, never overwrites |
+| Sets | `/srv/haotrannas` owner `haotrannas`, mode 0700 |
+| Installs | `/etc/systemd/system/haotrannas-server.service`, `daemon-reload`, `enable` |
+| Does not | Start the service: `init` must run first |
+| Re-run | Safe: updates binary and unit, keeps user and config |
+
+Then:
+
+1. Set the real LAN: `sudo nvim /etc/haotrannas/config.toml`, find
+   `pairing_networks`, set it to your LAN (for example `["192.168.1.0/24"]`),
+   `Esc`, `:wq`.
+2. Create the data files and TLS identity, once, as the service user:
+   ```
+   sudo -u haotrannas /usr/local/bin/haotrannas-server init --config /etc/haotrannas/config.toml
+   ```
+3. Start and check:
+   ```
+   sudo systemctl start haotrannas-server
+   systemctl status haotrannas-server
+   journalctl -u haotrannas-server -f
+   ```
+4. Back up `tls/` now (section 8).
 
 Rule for `config.toml`: `pairing_networks` lists the **real LAN only** (for
 example `192.168.1.0/24`). Never `10.0.0.0/8` or `10.66.0.0/24`: pairing is
 LAN-only (protocol/spec.md section 7), and the WireGuard subnet must not pair.
+The server refuses to start if any entry overlaps `10.66.0.0/24`. Every key is
+explained in `nas/config.example.toml`; unknown keys are an error.
+
+| Service hardening (unit file) | Effect |
+|---|---|
+| `User=haotrannas`, no capabilities | Port 47100 > 1024 needs none |
+| `ProtectSystem=strict` + `ReadWritePaths=/srv/haotrannas` | Can write only the data folder |
+| `RequiresMountsFor=/srv/haotrannas` | Waits for the ZFS mount |
+| `RestrictAddressFamilies` | IPv4, IPv6, Unix (admin socket), netlink (mDNS interface list) |
+| `UMask=0077` | New chunks, index, keys: owner only |
+
+Check the score after install: `systemd-analyze security haotrannas-server`
+(offline check on the dev PC: 3.0 OK).
 
 ## 4. Firewall
 
@@ -230,3 +285,7 @@ growing counts → replace it (next section). Check `smartctl -a` on it too.
 | IPv6 from the LAN: only ICMPv6 allowed, by design | ⚪ |
 | Disk replacement procedure | ⚪ |
 | `tls/` backup and restore | ⚪ |
+| `install.sh` real run (only the dry run and the non-root refusal are tested) | ⚪ |
+| Service starts under the hardening (needs the `run --config` command, later task) | ⚪ |
+| mDNS works with `RestrictAddressFamilies` (netlink for the interface list) | ⚪ |
+| `MemoryDenyWriteExecute` does not break the server | ⚪ |

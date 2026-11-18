@@ -25,6 +25,14 @@ jobs:
       - name: Dry-run tests
         run: nas/scripts/tests/run_tests.sh
 
+      # Also part of run_tests.sh, which skips it when systemd-analyze is
+      # missing. Here it must run: the runner has systemd, so a missing tool
+      # fails the job. The script verifies a temp copy with ExecStart pointed
+      # at /bin/true (the real binary is not on the runner) and fails on any
+      # warning that names the unit (verify exits 0 on unknown keys).
+      - name: Systemd unit check
+        run: nas/scripts/tests/verify_systemd_unit.sh
+
       # nft needs root (netlink). GitHub runners have passwordless sudo, so the
       # firewall syntax is checked here; -c only checks, it loads nothing.
       - name: Firewall syntax check

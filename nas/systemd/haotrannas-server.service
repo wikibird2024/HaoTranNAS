@@ -1,0 +1,64 @@
+# HaoTranNAS backup server. Author: Hao Tran
+#
+# Installed by nas/scripts/install.sh to /etc/systemd/system/.
+# Setup steps: nas/RUNBOOK.md section 3 (in the repo).
+# Check:  systemd-analyze verify haotrannas-server.service
+#         systemd-analyze security haotrannas-server.service   (after install)
+#
+# Expected CLI (the `run` flags come with a later task):
+#   haotrannas-server run --config <path>
+#     Reads <path> (missing file = built-in defaults, see
+#     nas/config.example.toml), then serves on listen_address until SIGTERM.
+#     Errors go to stderr (journald); a bad config exits non-zero at once.
+#   Before the first start, once, as the service user:
+#     sudo -u haotrannas /usr/local/bin/haotrannas-server init --config /etc/haotrannas/config.toml
+#
+# Port 47100 is above 1024, so the service needs no capabilities at all.
+# The only writable path is the data folder (ReadWritePaths). The config in
+# /etc/haotrannas is read-only for the service (ProtectSystem=strict).
+
+[Unit]
+Description=HaoTranNAS backup server
+Wants=network-online.target
+After=network-online.target
+# Never start on the bare OS-disk folder before the ZFS dataset is mounted.
+RequiresMountsFor=/srv/haotrannas
+
+[Service]
+Type=simple
+User=haotrannas
+Group=haotrannas
+ExecStart=/usr/local/bin/haotrannas-server run --config /etc/haotrannas/config.toml
+Restart=on-failure
+RestartSec=5s
+
+# --- hardening ---------------------------------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/srv/haotrannas
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# AF_NETLINK: mDNS lists the network interfaces through netlink.
+# AF_UNIX: the admin socket <data_directory>/admin.sock and journald.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# New files (chunks, index, TLS keys): owner only.
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

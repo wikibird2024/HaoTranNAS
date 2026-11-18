@@ -1,0 +1,51 @@
+# HaoTranNAS server config. Author: Hao Tran
+#
+# Installed by nas/scripts/install.sh to /etc/haotrannas/config.toml (only if
+# that file does not exist yet). Edit there: sudo nvim /etc/haotrannas/config.toml
+# then restart: sudo systemctl restart haotrannas-server
+#
+# Every value below is the built-in default; a missing file or a missing line
+# gives the same result. Unknown keys are an error (catches typos).
+# A test (server/src/config.rs) checks this file equals the defaults, so keep
+# the values here and in the code the same.
+
+# Address and port of the TLS listener (protocol/spec.md section 1).
+# 0.0.0.0 = all IPv4 interfaces (LAN and wg0). The firewall decides who gets in.
+listen_address = "0.0.0.0:47100"
+
+# Root of the store: chunks/, tmp/, index.sqlite, tls/, admin.sock.
+# The ZFS dataset tank/haotrannas is mounted here. The systemd unit can only
+# write here (ReadWritePaths): change both together.
+data_directory = "/srv/haotrannas"
+
+# Name the apps show for this server (mDNS, protocol/spec.md section 13).
+server_name = "haotrannas"
+
+# Source networks allowed to PAIR a new device (protocol/spec.md section 7).
+# Paired devices connect from anywhere the firewall allows; this list is only
+# for pairing.
+#
+# Put your REAL LAN ONLY here, as small as you can, e.g.:
+#   pairing_networks = ["192.168.1.0/24"]
+#
+# Never list 10.66.0.0/24 (the WireGuard subnet) or anything containing it,
+# such as 10.0.0.0/8: a phone on 4G behind the tunnel must never pair. The
+# server refuses to start with such a list. That is why the default leaves
+# out 10.0.0.0/8; a 10.x LAN adds its own subnet, e.g. "10.0.0.0/24".
+# Must not be empty. IPv6 networks work too, e.g. "fd00:1::/64".
+pairing_networks = ["192.168.0.0/16", "172.16.0.0/12"]
+
+# Announce the server on the LAN as _haotrannas._tcp.local.
+mdns_enabled = true
+
+# Most client connections served at once; more are refused.
+max_connections = 64
+
+# Re-hash every stored chunk this often (168 hours = weekly).
+scrub_interval_hours = 168
+
+# Run cleanup (old uploads, temp files, unused chunks) this often.
+cleanup_interval_minutes = 60
+
+# Delete an upload that was started but not committed after this time.
+upload_expiry_hours = 24
