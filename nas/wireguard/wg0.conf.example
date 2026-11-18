@@ -1,0 +1,16 @@
+# HaoTranNAS WireGuard server (on the NAS). Author: Hao Tran
+# Copy to /etc/wireguard/wg0.conf (mode 600) and replace the <...> placeholders
+# with the output of nas/scripts/wireguard_keys.sh. Never commit real keys.
+#
+# Subnet 10.66.0.0/24: NAS 10.66.0.1, phone 10.66.0.2.
+# Split tunnel: no NAT, no forwarding. The phone reaches only the NAS.
+
+[Interface]
+Address = 10.66.0.1/24
+ListenPort = 51820
+PrivateKey = <SERVER_PRIVATE_KEY>
+
+[Peer]
+# phone
+PublicKey = <PHONE_PUBLIC_KEY>
+AllowedIPs = 10.66.0.2/32

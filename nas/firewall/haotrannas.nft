@@ -1,0 +1,62 @@
+#!/usr/sbin/nft -f
+# HaoTranNAS host firewall (nftables). Author: Hao Tran
+#
+# Input policy: drop. Allowed in:
+#   established/related, loopback, ICMP / ICMPv6 essentials
+#   SSH 22/tcp            LAN only
+#   WireGuard 51820/udp   anywhere (the only port forwarded by the router)
+#   HaoTranNAS 47100/tcp  LAN and wg0 (protocol/spec.md section 1)
+#   mDNS 5353/udp         LAN only (protocol/spec.md section 13)
+#
+# Check:  sudo nft -c -f haotrannas.nft
+# Load:   sudo nft -f haotrannas.nft     (replaces only table inet haotrannas)
+#
+# LAN rules match IPv4 only and never on wg0, so a WireGuard peer gets port
+# 47100 and nothing else. IPv6 from the LAN is dropped except ICMPv6.
+
+# Adjust to your home LAN (smaller is safer, e.g. { 192.168.1.0/24 }).
+# Note: 10.0.0.0/8 also contains the WireGuard subnet 10.66.0.0/24. That is
+# fine here (LAN rules skip wg0), but the server's pairing_networks in
+# config.toml must list the real LAN only, never 10.66.0.0/24: pairing is
+# LAN-only (protocol/spec.md section 7).
+define LAN_NETWORKS = { 192.168.0.0/16, 10.0.0.0/8 }
+
+define WIREGUARD_INTERFACE = "wg0"
+define WIREGUARD_NETWORK = 10.66.0.0/24
+define WIREGUARD_PORT = 51820
+define HAOTRANNAS_PORT = 47100
+define SSH_PORT = 22
+define MDNS_PORT = 5353
+
+# Make reloading safe: create the table if missing, then delete and rebuild it.
+table inet haotrannas
+delete table inet haotrannas
+
+table inet haotrannas {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        ct state established,related accept
+        ct state invalid drop
+        iifname "lo" accept
+
+        # ICMP essentials (ping, path MTU, errors)
+        icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept
+        # ICMPv6 essentials (IPv6 breaks without neighbor discovery and packet-too-big)
+        icmpv6 type { echo-request, destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept
+        icmpv6 type { nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } ip6 hoplimit 255 accept
+        # Uncomment if the NAS gets its IPv6 address by DHCPv6:
+        # ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+
+        # WireGuard from anywhere
+        udp dport $WIREGUARD_PORT accept
+
+        # LAN only (not through wg0)
+        iifname != $WIREGUARD_INTERFACE ip saddr $LAN_NETWORKS tcp dport $SSH_PORT accept
+        iifname != $WIREGUARD_INTERFACE ip saddr $LAN_NETWORKS udp dport $MDNS_PORT accept
+
+        # HaoTranNAS server: LAN and WireGuard
+        iifname != $WIREGUARD_INTERFACE ip saddr $LAN_NETWORKS tcp dport $HAOTRANNAS_PORT accept
+        iifname $WIREGUARD_INTERFACE ip saddr $WIREGUARD_NETWORK tcp dport $HAOTRANNAS_PORT accept
+    }
+}

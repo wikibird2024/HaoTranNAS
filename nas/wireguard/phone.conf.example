@@ -1,0 +1,14 @@
+# HaoTranNAS WireGuard peer (phone). Author: Hao Tran
+# Replace the <...> placeholders, then import into the WireGuard app by QR:
+#   qrencode -t ansiutf8 < phone.conf
+# Split tunnel: only 10.66.0.1 (the NAS) goes through the VPN. No DNS line,
+# so the phone keeps its normal DNS and internet path.
+
+[Interface]
+Address = 10.66.0.2/32
+PrivateKey = <PHONE_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <SERVER_PUBLIC_KEY>
+Endpoint = <HOME_PUBLIC_IP_OR_DDNS_NAME>:51820
+AllowedIPs = 10.66.0.1/32

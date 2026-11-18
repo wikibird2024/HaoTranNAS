@@ -1,0 +1,3 @@
+would run: zpool create -o ashift=12 -O compression=lz4 -O atime=off -O xattr=sa -O mountpoint=none tank mirror /dev/sdX /dev/sdY
+would run: zfs create -o mountpoint=/srv/haotrannas tank/haotrannas
+would run: systemctl enable --now zfs-scrub-monthly@tank.timer
