@@ -1,11 +1,12 @@
 //! `haotrannas-cli`: command-line client that talks to the server without a
 //! phone. Used by the e2e tests and for scripting.
 //!
-//! M0: `ping --dev-plain` over plain TCP. TLS (and so every command without
-//! `--dev-plain`) arrives in M3.
+//! M0: `ping --dev-plain` over plain TCP. M1/M2: `upload --dev-plain`. TLS
+//! (and so every command without `--dev-plain`) arrives in M3.
 
 mod connection;
 mod ping;
+mod upload;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -40,7 +41,7 @@ enum Command {
     /// Pair this client with the server using the code it printed.
     Pair,
     /// Back up one file.
-    Upload,
+    Upload(UploadArgs),
     /// Back up every file in a folder.
     UploadDir,
     /// List one folder of backed-up files.
@@ -61,13 +62,31 @@ struct PingArgs {
     dev_plain: bool,
 }
 
+#[derive(Debug, Args)]
+struct UploadArgs {
+    /// Local file to back up.
+    file: PathBuf,
+    /// Backup path on the server; the file name when left out.
+    #[arg(long = "as", value_name = "REMOTE_PATH")]
+    remote_path: Option<String>,
+    /// Test: stop after N chunks without Commit (a dropped connection).
+    #[arg(long, value_name = "N")]
+    stop_after_chunks: Option<u32>,
+    /// Test: send `Commit` and disconnect without reading `CommitOk` (a lost reply).
+    #[arg(long, conflicts_with = "stop_after_chunks")]
+    drop_after_commit: bool,
+    /// Plain TCP without TLS, for a server started with `run --dev-plain`.
+    #[arg(long)]
+    dev_plain: bool,
+}
+
 impl Command {
     /// The name typed on the command line.
     fn name(&self) -> &'static str {
         match self {
             Self::Ping(_) => "ping",
             Self::Pair => "pair",
-            Self::Upload => "upload",
+            Self::Upload(_) => "upload",
             Self::UploadDir => "upload-dir",
             Self::List => "list",
             Self::Download => "download",
@@ -86,6 +105,7 @@ fn main() -> ExitCode {
     tracing::debug!(server = ?cli.server, identity_dir = ?cli.identity_dir, "parsed global flags");
     match &cli.command {
         Command::Ping(ping_args) => run_ping_command(cli.server.as_deref(), ping_args),
+        Command::Upload(upload_args) => run_upload_command(cli.server.as_deref(), upload_args),
         other => {
             eprintln!("haotrannas-cli {}: not implemented yet", other.name());
             ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE)
@@ -103,21 +123,59 @@ fn run_ping_command(server_address: Option<&str>, ping_args: &PingArgs) -> ExitC
         eprintln!("haotrannas-cli ping: give --server <host:port> (LAN discovery arrives in M3)");
         return ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE);
     };
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("haotrannas-cli: cannot start the async runtime: {error}");
-            return ExitCode::from(FAILURE_EXIT_CODE);
-        }
+    let Some(runtime) = start_runtime() else {
+        return ExitCode::from(FAILURE_EXIT_CODE);
     };
     match runtime.block_on(ping::run_ping(server_address, ping_args.count)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("haotrannas-cli ping: {error}");
             ExitCode::from(FAILURE_EXIT_CODE)
+        }
+    }
+}
+
+/// `upload`: checks the flags, runs it, prints one summary line.
+fn run_upload_command(server_address: Option<&str>, upload_args: &UploadArgs) -> ExitCode {
+    if !upload_args.dev_plain {
+        eprintln!("haotrannas-cli upload: TLS arrives in M3; use --dev-plain");
+        return ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE);
+    }
+    let Some(server_address) = server_address else {
+        eprintln!("haotrannas-cli upload: give --server <host:port> (LAN discovery arrives in M3)");
+        return ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE);
+    };
+    let Some(runtime) = start_runtime() else {
+        return ExitCode::from(FAILURE_EXIT_CODE);
+    };
+    let request = upload::UploadRequest {
+        file_path: upload_args.file.clone(),
+        remote_path: upload_args.remote_path.clone(),
+        stop_after_chunks: upload_args.stop_after_chunks,
+        is_drop_after_commit: upload_args.drop_after_commit,
+    };
+    match runtime.block_on(upload::run_upload(server_address, &request)) {
+        Ok(outcome) => {
+            println!("{}", outcome.summary_line());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("haotrannas-cli upload: {error:#}");
+            ExitCode::from(FAILURE_EXIT_CODE)
+        }
+    }
+}
+
+/// A single-thread async runtime, or `None` after printing why not.
+fn start_runtime() -> Option<tokio::runtime::Runtime> {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => Some(runtime),
+        Err(error) => {
+            eprintln!("haotrannas-cli: cannot start the async runtime: {error}");
+            None
         }
     }
 }

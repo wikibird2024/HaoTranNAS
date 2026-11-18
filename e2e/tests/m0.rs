@@ -163,7 +163,8 @@ fn request_not_built_yet_gets_internal_and_the_connection_stays() {
     let server = DevServer::start().unwrap();
     let mut client = RawClient::connect(server.address()).unwrap();
     say_hello(&mut client);
-    client.send(&file_offer(), 2).unwrap();
+    // Browse arrives in M5; upload requests are handled since M1.
+    client.send(&Message::ListDevices, 2).unwrap();
     let (request_id, reply) = client.expect_frame().unwrap();
     assert_eq!(request_id, 2);
     assert_eq!(

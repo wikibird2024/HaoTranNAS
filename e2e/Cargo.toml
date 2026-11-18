@@ -11,11 +11,13 @@ publish = false
 name = "haotrannas_e2e"
 
 # The server and cli run as programs; core only builds and reads raw frames
-# for the tests that break the protocol on purpose.
+# for the tests that break the protocol on purpose. rusqlite reads the
+# catalog (version counts) and marks a chunk bad, as scrub will (M6).
 [dependencies]
 haotrannas-core = { workspace = true }
 tempfile = { workspace = true }
 anyhow = { workspace = true }
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

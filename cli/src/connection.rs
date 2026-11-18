@@ -174,6 +174,19 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin> Connection<Stream> {
         }
     }
 
+    /// Sends one request and does not wait for its reply (tests of a lost
+    /// reply: the caller drops the connection right after).
+    pub async fn send_without_reply(&mut self, request: &Message) -> Result<(), ClientError> {
+        let request_id = self.take_request_id();
+        write_frame(&mut self.stream, request, request_id)
+            .await
+            .map_err(|error| ClientError::ConnectionLost(error.to_string()))?;
+        self.stream
+            .flush()
+            .await
+            .map_err(|error| ClientError::ConnectionLost(error.to_string()))
+    }
+
     /// Sends `Close NORMAL` and ends the stream. Errors are ignored: the
     /// connection is over either way.
     pub async fn close(mut self) {
