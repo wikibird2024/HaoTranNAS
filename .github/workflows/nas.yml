@@ -25,5 +25,9 @@ jobs:
       - name: Dry-run tests
         run: nas/scripts/tests/run_tests.sh
 
-      # Not run: `nft -c -f nas/firewall/haotrannas.nft` needs root (netlink),
-      # so the firewall syntax is checked on the NAS only (see nas/RUNBOOK.md).
+      # nft needs root (netlink). GitHub runners have passwordless sudo, so the
+      # firewall syntax is checked here; -c only checks, it loads nothing.
+      - name: Firewall syntax check
+        run: |
+          sudo apt-get install -y nftables
+          sudo nft -c -f nas/firewall/haotrannas.nft
