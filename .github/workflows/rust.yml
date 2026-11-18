@@ -1,0 +1,52 @@
+name: rust
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build binaries
+        run: cargo build --workspace --bins
+
+      - name: Test
+        run: cargo test --workspace
+
+      # TLS must use the ring provider only. aws-lc-rs / aws-lc-sys come in when
+      # a rustls-family crate has its default features on.
+      # `cargo tree -i <name>` fails when the package is absent, which is what
+      # we want. A bare `! cmd` line would not fail the step under `set -e`,
+      # hence the `if`. The grep over the full tree also covers all targets
+      # and features, and fails loudly if `cargo tree` itself breaks.
+      - name: No aws-lc in the dependency tree
+        run: |
+          for package in aws-lc-sys aws-lc-rs; do
+            if cargo tree --workspace -i "$package"; then
+              echo "$package found in the dependency tree" >&2
+              exit 1
+            fi
+          done
+          cargo tree --workspace --all-features --target all --edges all --prefix none > "$RUNNER_TEMP/dependency-tree.txt"
+          if grep -E '^aws-lc-(rs|sys) ' "$RUNNER_TEMP/dependency-tree.txt"; then
+            echo "aws-lc found in the dependency tree" >&2
+            exit 1
+          fi

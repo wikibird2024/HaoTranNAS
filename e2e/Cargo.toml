@@ -1,0 +1,21 @@
+[package]
+name = "haotrannas-e2e"
+description = "End-to-end tests: the real cli against the real server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "haotrannas_e2e"
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[lints]
+workspace = true

@@ -10,4 +10,15 @@ Rust daemon that runs on the NAS: listener, handlers, chunk store, SQLite catalo
 
 ## Build · Run · Test
 
-Not set up yet (planned: `cargo build`, `cargo run`, `cargo test`).
+Run from the repo root (Cargo workspace).
+
+| Step | Command |
+|---|---|
+| Build | `cargo build -p haotrannas-server` |
+| Run | `cargo run -p haotrannas-server -- <init\|run\|pair\|devices\|restore\|scrub-now>` |
+| Help | `cargo run -p haotrannas-server -- --help` |
+| Test | `cargo test -p haotrannas-server` |
+| Lint | `cargo clippy -p haotrannas-server --all-targets -- -D warnings` |
+
+Logs go to stderr; set the level with `RUST_LOG`, for example `RUST_LOG=debug`.
+Scaffold for now: every command prints "not implemented yet" and exits with code 2.

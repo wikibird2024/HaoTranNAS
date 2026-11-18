@@ -1,0 +1,3 @@
+# Project name is a word, not code: no backticks needed in doc comments.
+# ".." keeps clippy's default list.
+doc-valid-idents = ["HaoTranNAS", ".."]
