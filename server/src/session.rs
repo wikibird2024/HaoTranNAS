@@ -30,6 +30,10 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::handlers::hello::{ServerIdentity, handle_hello};
+use crate::handlers::upload::{
+    FileOfferRequest, UploadError, UploadStorage, handle_chunk_data, handle_commit,
+    handle_file_offer,
+};
 
 /// Text of the `Error INTERNAL` sent for requests that later milestones add.
 pub const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented yet (milestone M1+)";
@@ -46,6 +50,8 @@ pub struct SessionSettings {
     pub handshake_timeout_ms: u64,
     /// Time without any frame before the connection is closed.
     pub idle_timeout_ms: u64,
+    /// Chunk store and catalog for the upload requests.
+    pub upload_storage: UploadStorage,
 }
 
 /// Why a session ended (for logs and tests).
@@ -161,14 +167,16 @@ where
             }
         };
 
-        last_frame_at = Instant::now();
         let request_id = frame.header.request_id;
-        match handle_frame(&frame, &mut state, paired_device_id, settings) {
+        match handle_frame(&frame, &mut state, paired_device_id, settings).await {
             Step::Reply(reply) => {
                 if let Err(error) = write_frame(&mut stream, &reply, request_id).await {
                     tracing::debug!(%error, "connection failed while writing a reply");
                     break SessionEnd::ConnectionFailed;
                 }
+                // Idle time counts from the reply, not from the request: a
+                // slow request (Commit re-hashes the whole file) is not idle.
+                last_frame_at = Instant::now();
             }
             Step::Fatal(code, text) => {
                 break send_fatal(&mut stream, request_id, code, &text).await;
@@ -184,7 +192,7 @@ where
 }
 
 /// Decodes one frame, checks it against the state machine and answers it.
-fn handle_frame(
+async fn handle_frame(
     frame: &RawFrame,
     state: &mut SessionState,
     paired_device_id: Option<u64>,
@@ -220,11 +228,72 @@ fn handle_frame(
             *state = SessionState::Closed;
             Step::EndQuietly
         }
-        // Allowed by the state machine, handled from M1 on. Not fatal.
+        Message::FileOffer { .. } | Message::ChunkData { .. } | Message::Commit { .. } => {
+            // The state machine lets these through only in Ready, which
+            // always has a device.
+            let Some(device_id) = paired_device_id else {
+                return Step::Fatal(ErrorCode::NotPaired, "no device on this connection".into());
+            };
+            match handle_upload_request(message, &settings.upload_storage, device_id).await {
+                Ok(reply) => Step::Reply(reply),
+                Err((code, text)) => Step::Reply(Message::Error {
+                    code: code.code(),
+                    message: fit_message(&text),
+                }),
+            }
+        }
+        // Allowed by the state machine, handled in later milestones. Not fatal.
         _ => Step::Reply(Message::Error {
             code: ErrorCode::Internal.code(),
             message: NOT_IMPLEMENTED_MESSAGE.to_owned(),
         }),
+    }
+}
+
+/// Passes an upload request to its handler. Its errors are not fatal.
+async fn handle_upload_request(
+    message: Message,
+    upload_storage: &UploadStorage,
+    device_id: u64,
+) -> Result<Message, UploadError> {
+    match message {
+        Message::FileOffer {
+            path,
+            size_bytes,
+            modified_time_ms,
+            file_sha256,
+            chunk_hashes,
+        } => {
+            let offer = FileOfferRequest {
+                path,
+                size_bytes,
+                modified_time_ms,
+                file_sha256,
+                chunk_hashes,
+            };
+            handle_file_offer(upload_storage, device_id, offer).await
+        }
+        Message::ChunkData {
+            upload_id,
+            chunk_index,
+            chunk_sha256,
+            data,
+        } => {
+            handle_chunk_data(
+                upload_storage,
+                device_id,
+                upload_id,
+                chunk_index,
+                chunk_sha256,
+                data,
+            )
+            .await
+        }
+        Message::Commit { upload_id } => handle_commit(upload_storage, device_id, upload_id).await,
+        other => Err((
+            ErrorCode::Internal,
+            format!("{} is not an upload request", other.message_type().name()),
+        )),
     }
 }
 
@@ -288,6 +357,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
+    use crate::handlers::upload::test_support::open_test_storage;
 
     /// The client end of an in-memory connection to a running session.
     struct TestClient {
@@ -295,16 +365,20 @@ mod tests {
         decoder: FrameDecoder,
         session: JoinHandle<SessionEnd>,
         shutdown_sender: watch::Sender<bool>,
+        /// Keeps the storage folder alive as long as the session.
+        _storage_folder: tempfile::TempDir,
     }
 
     impl TestClient {
         fn start(paired_device_id: Option<u64>) -> Self {
             let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
             let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+            let (storage_folder, upload_storage) = open_test_storage();
             let settings = SessionSettings {
                 server_identity: ServerIdentity::new("attic".to_owned()),
                 handshake_timeout_ms: HANDSHAKE_TIMEOUT_MS,
                 idle_timeout_ms: IDLE_TIMEOUT_MS,
+                upload_storage,
             };
             let session = tokio::spawn(async move {
                 run_session(
@@ -320,6 +394,7 @@ mod tests {
                 decoder: FrameDecoder::new(),
                 session,
                 shutdown_sender,
+                _storage_folder: storage_folder,
             }
         }
 
@@ -507,7 +582,7 @@ mod tests {
     async fn request_not_built_yet_gets_internal_and_the_session_goes_on() {
         let mut client = TestClient::start(Some(1));
         client.hello().await;
-        client.send(&file_offer(), 2).await;
+        client.send(&Message::ListDevices, 2).await;
         let (request_id, reply) = client.receive().await.unwrap();
         assert_eq!(request_id, 2);
         assert_eq!(
@@ -519,6 +594,75 @@ mod tests {
         );
         client.send(&Message::Ping, 3).await;
         assert_eq!(client.receive().await, Some((3, Message::Pong)));
+    }
+
+    #[tokio::test]
+    async fn upload_errors_are_not_fatal_and_a_small_upload_commits() {
+        let mut client = TestClient::start(Some(1));
+        client.hello().await;
+        let bad_offer = Message::FileOffer {
+            path: "/abs".to_owned(),
+            size_bytes: 0,
+            modified_time_ms: 0,
+            file_sha256: [0; 32],
+            chunk_hashes: Vec::new(),
+        };
+        client.send(&bad_offer, 2).await;
+        let (request_id, reply) = client.receive().await.unwrap();
+        assert_eq!(request_id, 2);
+        assert!(matches!(reply, Message::Error { code, .. } if code == error(ErrorCode::BadPath)));
+        client.send(&Message::Ping, 3).await;
+        assert_eq!(client.receive().await, Some((3, Message::Pong)));
+
+        let data = b"hello".to_vec();
+        let chunk_sha256 = ChunkHash::of_bytes(&data);
+        let offer = Message::FileOffer {
+            path: "notes/hello.txt".to_owned(),
+            size_bytes: 5,
+            modified_time_ms: 1,
+            file_sha256: chunk_sha256.0,
+            chunk_hashes: vec![chunk_sha256],
+        };
+        client.send(&offer, 4).await;
+        let Some((
+            4,
+            Message::NeedChunks {
+                upload_id,
+                existing_version_id: 0,
+                missing_indexes,
+            },
+        )) = client.receive().await
+        else {
+            panic!("expected NeedChunks");
+        };
+        assert_eq!(missing_indexes, vec![0]);
+        let chunk = Message::ChunkData {
+            upload_id,
+            chunk_index: 0,
+            chunk_sha256,
+            data,
+        };
+        client.send(&chunk, 5).await;
+        assert_eq!(
+            client.receive().await,
+            Some((
+                5,
+                Message::ChunkOk {
+                    chunk_index: 0,
+                    chunk_sha256
+                }
+            ))
+        );
+        client.send(&Message::Commit { upload_id }, 6).await;
+        assert!(matches!(
+            client.receive().await,
+            Some((6, Message::CommitOk { version_id })) if version_id > 0
+        ));
+        client.send(&Message::Commit { upload_id }, 7).await;
+        assert!(matches!(
+            client.receive().await,
+            Some((7, Message::Error { code, .. })) if code == error(ErrorCode::UnknownUpload)
+        ));
     }
 
     #[tokio::test(start_paused = true)]

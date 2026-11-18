@@ -12,14 +12,17 @@
 use std::fs::{self, DirBuilder, Permissions};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 use haotrannas_core::limits::HASH_BYTES;
 
 use crate::catalog::reader::CatalogReader;
+use crate::catalog::writer::CatalogWriter;
 use crate::catalog::{schema, writer};
 use crate::chunk_store::ChunkStore;
+use crate::handlers::upload::UploadStorage;
 use crate::tls_identity::TlsIdentity;
 
 /// Folder for the TLS identity.
@@ -103,6 +106,28 @@ impl DataFolder {
         })?;
         ChunkStore::open(&self.root_directory)?;
         Ok(identity.server_fingerprint().short_id())
+    }
+
+    /// Opens the chunk store and starts the single catalog writer for
+    /// serving uploads. The writer thread ends when every handle is dropped.
+    pub fn open_upload_storage(
+        &self,
+    ) -> anyhow::Result<(UploadStorage, std::thread::JoinHandle<()>)> {
+        let database_path = self.database_path();
+        let (catalog_writer, writer_thread) = CatalogWriter::start(&database_path)
+            .with_context(|| format!("cannot open the catalog {}", database_path.display()))?;
+        let chunk_store = ChunkStore::open(&self.root_directory).with_context(|| {
+            format!(
+                "cannot open the chunk store in {}",
+                self.root_directory.display()
+            )
+        })?;
+        let storage = UploadStorage {
+            chunk_store: Arc::new(chunk_store),
+            catalog_writer,
+            catalog_reader: CatalogReader::new(&database_path),
+        };
+        Ok((storage, writer_thread))
     }
 
     /// Makes sure device row 1 is the dev device, adding it to an empty

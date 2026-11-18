@@ -4,14 +4,15 @@
 //! → chunk store + catalog. Background jobs: scrub and cleanup.
 //!
 //! M0: `init` makes a data folder; `run --dev-plain` serves Hello and Ping
-//! over plain TCP on loopback. TLS (`run` without `--dev-plain`) is M3.
+//! over plain TCP on loopback. M1/M2: uploads (`FileOffer`, `ChunkData`, `Commit`)
+//! and the offline `restore`. TLS (`run` without `--dev-plain`) is M3.
 
 mod admin;
-// Storage pieces used by `init` and dev mode now; the rest of their API is
-// wired in by M1 (upload) and M3 (pairing, TLS).
-#[allow(dead_code, reason = "full API wired in by M1/M3")]
+// Storage pieces used by `init`, dev mode and uploads now; the rest of their
+// API is wired in by M3 (pairing, TLS), M5 (browse) and M6 (cleanup).
+#[allow(dead_code, reason = "full API wired in by M3/M5/M6")]
 mod catalog;
-#[allow(dead_code, reason = "full API wired in by M1")]
+#[allow(dead_code, reason = "sweep_tmp is wired in by the cleanup job (M6)")]
 mod chunk_store;
 #[allow(dead_code, reason = "pairing_networks check wired in by M3")]
 mod config;
@@ -21,6 +22,7 @@ mod jobs;
 mod listener;
 mod mdns;
 mod pairing;
+mod restore;
 mod session;
 #[allow(dead_code, reason = "TLS config and device certs wired in by M3")]
 mod tls_identity;
@@ -30,6 +32,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
@@ -40,9 +43,10 @@ use tokio::sync::watch;
 
 use crate::admin::AdminSocket;
 use crate::config::ServerConfig;
-use crate::data_folder::DataFolder;
+use crate::data_folder::{DEV_DEVICE_ID, DataFolder};
 use crate::handlers::hello::ServerIdentity;
 use crate::listener::{ConnectionLimit, is_dev_plain_address_allowed, serve_dev_plain};
+use crate::restore::{RestoreRequest, restore_file};
 use crate::session::SessionSettings;
 
 /// Exit code for a failure (bad config, folder not initialized, bind failed).
@@ -70,8 +74,8 @@ enum Command {
     Pair,
     /// List or remove paired devices.
     Devices,
-    /// Copy backed-up files out of the store.
-    Restore,
+    /// Copy one backed-up file out of the store (offline).
+    Restore(RestoreArgs),
     /// Re-hash every stored chunk now and report bad ones.
     ScrubNow,
 }
@@ -111,6 +115,27 @@ struct RunArgs {
     handshake_timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Args)]
+struct RestoreArgs {
+    #[command(flatten)]
+    config: ConfigArgs,
+    /// Device whose backup to read (dev mode is device 1).
+    #[arg(long, default_value_t = DEV_DEVICE_ID)]
+    device_id: u64,
+    /// Backup path of the file, as it was uploaded.
+    #[arg(long)]
+    path: String,
+    /// Version to restore; the latest when left out.
+    #[arg(long)]
+    version_id: Option<u64>,
+    /// File to write.
+    #[arg(long)]
+    output: PathBuf,
+    /// Replace the output file if it exists.
+    #[arg(long)]
+    force: bool,
+}
+
 impl Command {
     /// The name typed on the command line.
     fn name(&self) -> &'static str {
@@ -119,7 +144,7 @@ impl Command {
             Self::Run(_) => "run",
             Self::Pair => "pair",
             Self::Devices => "devices",
-            Self::Restore => "restore",
+            Self::Restore(_) => "restore",
             Self::ScrubNow => "scrub-now",
         }
     }
@@ -138,6 +163,7 @@ fn main() -> ExitCode {
     let outcome = match cli.command {
         Command::Init(args) => run_init(&args),
         Command::Run(args) => run_server(&args),
+        Command::Restore(args) => run_restore(&args),
         other => {
             eprintln!("haotrannas-server {}: not implemented yet", other.name());
             Ok(ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE))
@@ -170,6 +196,22 @@ fn run_init(args: &InitArgs) -> anyhow::Result<ExitCode> {
         "initialized {}; server id {short_id}",
         data_folder.root_directory().display()
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `restore`: copy one file version out of the store.
+fn run_restore(args: &RestoreArgs) -> anyhow::Result<ExitCode> {
+    let config = load_config(&args.config)?;
+    let data_folder = DataFolder::new(config.data_directory);
+    let request = RestoreRequest {
+        device_id: args.device_id,
+        path: args.path.clone(),
+        version_id: args.version_id,
+        output_path: args.output.clone(),
+        is_overwrite_allowed: args.force,
+    };
+    let summary = restore_file(&data_folder, &request)?;
+    println!("{}", summary.line());
     Ok(ExitCode::SUCCESS)
 }
 
@@ -208,23 +250,34 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
         );
     }
     let dev_device_id = data_folder.ensure_dev_device()?;
+    let (upload_storage, catalog_writer_thread) = data_folder.open_upload_storage()?;
     let settings = SessionSettings {
         server_identity: ServerIdentity::new(config.server_name.clone()),
         handshake_timeout_ms: args.handshake_timeout_ms.unwrap_or(HANDSHAKE_TIMEOUT_MS),
         idle_timeout_ms: IDLE_TIMEOUT_MS,
+        upload_storage,
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("cannot start the async runtime")?;
-    runtime.block_on(serve_dev_plain_until_stopped(
+    let serve_outcome = runtime.block_on(serve_dev_plain_until_stopped(
         config.listen_address,
         data_folder.root_directory(),
         dev_device_id,
         settings,
         max_connections,
-    ))?;
+    ));
+    // Drops every task (and with them every catalog writer handle); a
+    // blocking chunk write still running gets the grace time to finish.
+    runtime.shutdown_timeout(Duration::from_millis(SHUTDOWN_GRACE_MS));
+    serve_outcome?;
+    // The writer thread ends once its last handle is gone; a pending write
+    // finishes first.
+    if catalog_writer_thread.join().is_err() {
+        bail!("the catalog writer thread panicked");
+    }
     Ok(ExitCode::SUCCESS)
 }
 

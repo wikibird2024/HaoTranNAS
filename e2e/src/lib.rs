@@ -5,6 +5,7 @@
 //! The tests run the real binaries, so build them first:
 //! `cargo build --workspace --bins`.
 
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -14,6 +15,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use haotrannas_core::chunker::ChunkHash;
 use haotrannas_core::codec::{decode_frame, encode_frame};
 use haotrannas_core::frame::FrameDecoder;
 use haotrannas_core::message::Message;
@@ -80,14 +82,16 @@ pub fn init_data_folder(data_directory: &Path) -> anyhow::Result<Output> {
 }
 
 /// A real `haotrannas-server run --dev-plain` on a fresh temporary data
-/// folder. Killed (SIGKILL) when dropped, unless already stopped.
+/// folder (or a given one). Killed (SIGKILL) when dropped, unless already
+/// stopped.
 pub struct DevServer {
     child: Child,
     address: SocketAddr,
     data_directory: PathBuf,
     log_path: PathBuf,
-    /// Kept so the folder lives as long as the server.
-    _temporary_directory: TempDir,
+    /// Kept so the folder lives as long as the server (`None` when the
+    /// caller owns the folder).
+    _temporary_directory: Option<TempDir>,
 }
 
 impl DevServer {
@@ -106,15 +110,42 @@ impl DevServer {
             .tempdir()
             .context("cannot make a temporary folder")?;
         let data_directory = temporary_directory.path().join("data");
-        let init_output = init_data_folder(&data_directory)?;
-        if !init_output.status.success() {
-            bail!(
-                "init failed: {}",
-                String::from_utf8_lossy(&init_output.stderr)
-            );
+        Self::spawn(data_directory, extra_run_args, Some(temporary_directory))
+    }
+
+    /// `init` (only if `data_directory` is not a data folder yet), then
+    /// `run --dev-plain` on it. The caller owns the folder, so a test can
+    /// kill the server and start a new one on the same data. Keep the path
+    /// short (admin socket < 108 bytes).
+    pub fn start_on(data_directory: &Path) -> anyhow::Result<Self> {
+        Self::spawn(data_directory.to_path_buf(), &[], None)
+    }
+
+    fn spawn(
+        data_directory: PathBuf,
+        extra_run_args: &[&str],
+        temporary_directory: Option<TempDir>,
+    ) -> anyhow::Result<Self> {
+        if !data_directory.join("index.sqlite").exists() {
+            let init_output = init_data_folder(&data_directory)?;
+            if !init_output.status.success() {
+                bail!(
+                    "init failed: {}",
+                    String::from_utf8_lossy(&init_output.stderr)
+                );
+            }
         }
 
-        let log_path = temporary_directory.path().join("server.log");
+        // Each start gets its own log next to the data folder (a restart on
+        // the same folder keeps the old log).
+        let mut log_number = 1;
+        let log_path = loop {
+            let candidate = data_directory.with_file_name(format!("server-{log_number}.log"));
+            if !candidate.exists() {
+                break candidate;
+            }
+            log_number += 1;
+        };
         let log_file = File::create(&log_path).context("cannot make the server log")?;
         let mut child = Command::new(server_binary()?)
             .args([
@@ -159,6 +190,13 @@ impl DevServer {
     /// The server's data folder.
     pub fn data_directory(&self) -> &Path {
         &self.data_directory
+    }
+
+    /// SIGKILL (a crash: no cleanup at all) and wait for the process.
+    pub fn kill_hard(&mut self) -> anyhow::Result<()> {
+        self.child.kill().context("cannot kill the server")?;
+        self.child.wait().context("cannot wait for the server")?;
+        Ok(())
     }
 
     /// The process id, for sending signals.
@@ -306,4 +344,148 @@ impl RawClient {
             Some((_, message)) => bail!("expected end of connection, got {message:?}"),
         }
     }
+}
+
+/// Runs the server binary with `args` (for example `restore ...`).
+pub fn run_server_command(args: &[&OsStr]) -> anyhow::Result<Output> {
+    Command::new(server_binary()?)
+        .args(args)
+        .output()
+        .context("cannot run haotrannas-server")
+}
+
+/// `haotrannas-server restore --data-dir D --path P --output F` (device 1,
+/// latest version).
+pub fn restore_file(data_directory: &Path, path: &str, output: &Path) -> anyhow::Result<Output> {
+    run_server_command(&[
+        OsStr::new("restore"),
+        OsStr::new("--data-dir"),
+        data_directory.as_os_str(),
+        OsStr::new("--path"),
+        OsStr::new(path),
+        OsStr::new("--output"),
+        output.as_os_str(),
+    ])
+}
+
+/// `haotrannas-cli --server A upload <file> --dev-plain [extra args]`.
+pub fn cli_upload(address: SocketAddr, file: &Path, extra_args: &[&str]) -> anyhow::Result<Output> {
+    Command::new(cli_binary()?)
+        .arg("--server")
+        .arg(address.to_string())
+        .arg("upload")
+        .arg(file)
+        .arg("--dev-plain")
+        .args(extra_args)
+        .output()
+        .context("cannot run haotrannas-cli upload")
+}
+
+/// Stdout of a finished program, failing (with stdout and stderr) unless
+/// it exited 0.
+pub fn expect_success(output: &Output) -> anyhow::Result<String> {
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        bail!(
+            "exit {:?}\nstdout: {stdout}\nstderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(stdout)
+}
+
+/// Pseudo-random bytes from `seed` (xorshift: same seed, same bytes).
+pub fn test_bytes(size_bytes: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut bytes = Vec::with_capacity(size_bytes + 8);
+    while bytes.len() < size_bytes {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        bytes.extend_from_slice(&state.to_le_bytes());
+    }
+    bytes.truncate(size_bytes);
+    bytes
+}
+
+/// Every file under `<data_directory>/chunks/`, sorted.
+pub fn chunk_files(data_directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    fn walk(directory: &Path, found: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                walk(&entry.path(), found)?;
+            } else {
+                found.push(entry.path());
+            }
+        }
+        Ok(())
+    }
+    let mut found = Vec::new();
+    walk(&data_directory.join("chunks"), &mut found)?;
+    found.sort();
+    Ok(found)
+}
+
+/// Fails unless every chunk file's bytes hash to its own name. Returns how
+/// many chunk files there are.
+pub fn check_every_chunk_file(data_directory: &Path) -> anyhow::Result<usize> {
+    let files = chunk_files(data_directory)?;
+    for file in &files {
+        let name = file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("chunk file name is not UTF-8")?;
+        let actual_hash = ChunkHash::of_bytes(&fs::read(file)?).to_hex();
+        if actual_hash != name {
+            bail!("{} hashes to {actual_hash}", file.display());
+        }
+    }
+    Ok(files.len())
+}
+
+/// Number of committed versions of (device 1, `path`), read from the catalog.
+pub fn version_count(data_directory: &Path, path: &str) -> anyhow::Result<i64> {
+    let connection = rusqlite::Connection::open_with_flags(
+        data_directory.join("index.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    Ok(connection.query_row(
+        "SELECT COUNT(*) FROM versions JOIN files ON files.id = versions.file_id
+         WHERE files.device_id = 1 AND files.path = ?1",
+        [path],
+        |row| row.get(0),
+    )?)
+}
+
+/// Marks a chunk bad in the catalog, as scrub does when it finds bit rot
+/// (M6). Safe while the server runs (SQLite locking, WAL).
+pub fn mark_chunk_bad(data_directory: &Path, chunk_hash: &ChunkHash) -> anyhow::Result<()> {
+    let connection = rusqlite::Connection::open(data_directory.join("index.sqlite"))?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    let changed_count = connection.execute(
+        "UPDATE chunks SET status = 'bad' WHERE hash = ?1",
+        [chunk_hash.0],
+    )?;
+    if changed_count != 1 {
+        bail!("chunk {chunk_hash} is not in the catalog");
+    }
+    Ok(())
+}
+
+/// Polls `condition` every 20 ms until it is true; fails after `timeout_ms`.
+pub fn wait_until(
+    timeout_ms: u64,
+    mut condition: impl FnMut() -> anyhow::Result<bool>,
+) -> anyhow::Result<()> {
+    let started_at = std::time::Instant::now();
+    while started_at.elapsed() < Duration::from_millis(timeout_ms) {
+        if condition()? {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    bail!("condition not met within {timeout_ms} ms")
 }
