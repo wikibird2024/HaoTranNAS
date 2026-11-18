@@ -59,6 +59,18 @@ flutter test --tags server                     # needs a running haotrannas-serv
 flutter test --tags mdns                       # needs a real LAN with multicast
 ```
 
+| Tests | What they check | Needs |
+|---|---|---|
+| `test/protocol/` | Codec against the golden vectors, fuzz | nothing |
+| `test/client/nas_connection_test.dart` | Handshake, request ids, queue, timeouts, keepalive, failures, log redaction; a scripted fake server on `FakeLink` (`test/client/fake_server.dart`) | nothing |
+| `test/integration/server_ping_test.dart` (tag `server`) | Hello → HelloOk(device 1) → 3 pings → Close over real TCP | a dev server; skipped when `NAS_SERVER_ADDR` is not set |
+
+Against a real server (dev mode, plain TCP on 127.0.0.1):
+
+```bash
+NAS_SERVER_ADDR=127.0.0.1:47100 flutter test --tags server
+```
+
 ## Phone-only checks (manual)
 
 These cannot run in CI or on the dev machine; do them on a real phone.
