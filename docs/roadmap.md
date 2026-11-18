@@ -30,8 +30,8 @@ been shown. Code alone doesn't count.
 | # | Goal | Sub-projects | You learn | Done when | Status |
 |---|---|---|---|---|---|
 | M0 | Frames + Hello/Ping over plain TCP | protocol, core, server, cli, mobile | Framing, state machine, async | Unit tests pass; `cli ping` gets `Pong`; Dart client pings the Rust server (`e2e/scripts/flutter_vs_server.sh`) | 🟢 2026-11-18 |
-| M1 | Upload one small file (no resume) | core, server, cli | Hashing | Server file hash = source file hash | ⚪ |
-| M2 | Chunks + NeedChunks + Commit | core, server, cli, e2e | Chunking, idempotency, atomicity | e2e test: kill connection mid-upload, resume works, no duplicate chunks | ⚪ |
+| M1 | Upload one small file (no resume) | core, server, cli, mobile | Hashing | Server file hash = source file hash (`e2e/scripts/m1_upload.sh`) | 🟢 2026-11-18 |
+| M2 | Chunks + NeedChunks + Commit | core, server, cli, e2e, mobile | Chunking, idempotency, atomicity | e2e test: kill connection mid-upload, resume works, no duplicate chunks (`e2e/tests/m1_m2.rs`) | 🟢 2026-11-18 |
 | M3 | Pairing + mutual TLS + mDNS | core, server, cli | Trust, certificates | Unpaired client refused; paired client works | ⚪ |
 | M3n | NAS host ready | nas | Linux admin, ZFS | Server runs as a service on the NAS; survives reboot | ⚪ |
 | M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | ⚪ |
