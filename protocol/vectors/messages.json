@@ -789,11 +789,11 @@
     "0001",
     "00000001",
     "0001",
-    "00ff616263"
+    "003f616263"
    ],
    "stage": "payload",
    "expect_error": "MALFORMED_FRAME",
-   "why": "string length 255 but only 3 bytes left"
+   "why": "string length 63 (under the 64-byte limit) but only 3 bytes left"
   },
   {
    "name": "hello_invalid_utf8",
