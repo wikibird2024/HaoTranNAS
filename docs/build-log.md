@@ -93,3 +93,42 @@ echo 68616f7472616e6e61732d636c692f302e312e30 | xxd -r -p; echo
 ```
 
 Next exercise: decode `ping` and `error_unknown_upload` from the same file.
+
+## Wave 1 — the parts (2026-11-18)
+
+Five helpers in parallel, each owning different files, each merged only after
+its checks passed again on `main`.
+
+```
+ protocol/vectors ──► Rust codec (core)  ─┐
+        (38 + 18)  └► Dart codec (mobile) ┴─► both byte-identical = the contract holds
+
+ server: chunk store (atomic) · catalog (SQLite, one writer) · TLS identity · config
+ nas:    hardened systemd unit · install script
+```
+
+| Part | What it does | Proof |
+|---|---|---|
+| Rust codec | Reads and writes all 22 messages; frame decoder; path rules; chunker | 38 valid + 18 invalid frames, 20 paths, 6 chunk files; random-input tests never crash |
+| Dart codec | The same, written separately | The **same** 38 + 18 frames and 20 paths; 2000 random payloads per type |
+| Chunk store | Write to `tmp/` → fsync → re-read + re-hash → rename → fsync folder | Tests: bad hash writes nothing; crash before rename leaves no chunk; a corrupted chunk is detected and replaced |
+| Catalog | Spec §8 upload rules in SQL, one writer thread | 15 tests: dedupe, lost CommitOk, bad chunk, atomic commit (forced failure leaves no rows) |
+| TLS identity | Server key + device CA; device certificates; pinned server check | Real TLS 1.3 handshakes: paired ✔, unpaired ✔, other CA ✘, wrong pin ✘ |
+| Config + service | `/etc/haotrannas/config.toml`; systemd hardening score 3.0 | 17 config tests; example file can't drift from code |
+
+### Lessons from wave 1
+
+| What happened | Lesson |
+|---|---|
+| Two independent codecs + one set of test frames found nothing wrong in the spec, but found a **weak test frame** (rejected for the wrong reason) | Check *why* a test passes, not only *that* it passes |
+| Dart's UTF-8 decoder silently drops a leading BOM (`EF BB BF`); Rust keeps it | Two implementations expose hidden library behaviour. A new test frame now locks both to the same bytes |
+| A shared build folder let parallel helpers overwrite each other's builds | Speed tricks must not share mutable state. One build folder per worktree |
+| The catalog refused to remove a phone that has backups | Safety first, then a proper answer: revoke without deleting (D-025) |
+
+### Exercise
+
+1. Open `protocol/vectors/messages.json` and find `hello_name_starts_with_bom`.
+   Decode its `device_name` bytes `0003efbbbf` by hand: length 3, then the
+   three BOM bytes.
+2. Run `cargo test -p haotrannas-core --test golden_vectors -- --nocapture`
+   and read why each invalid frame is rejected.

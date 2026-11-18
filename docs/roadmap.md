@@ -8,8 +8,8 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 
 ```
  Phase 0 ──► M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M6 ──► M7
- ▲ HERE
- (docs + repo shape)
+  done     ▲ HERE (wave 2)
+           wave 1 parts done: codecs (Rust + Dart), chunk store, catalog, TLS identity, config
 ```
 
 ## Phase 0: foundation
