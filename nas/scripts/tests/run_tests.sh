@@ -75,6 +75,59 @@ else
     pass "no WireGuard keys in nas/"
 fi
 
+# 7. Install dry run prints exactly the expected commands and next steps.
+#    The repo path differs per machine, so it is replaced by NAS_DIRECTORY.
+if "$scripts_directory/install.sh" --dry-run /path/to/haotrannas-server \
+    >"$output_directory/install_dry_run.raw" 2>"$output_directory/install_dry_run.err" \
+    && sed "s|$nas_directory|NAS_DIRECTORY|g" "$output_directory/install_dry_run.raw" \
+        >"$output_directory/install_dry_run.out" \
+    && diff -u "$tests_directory/install.dry_run.expected" "$output_directory/install_dry_run.out" \
+    && [[ ! -s "$output_directory/install_dry_run.err" ]]; then
+    pass "install.sh --dry-run matches expected output"
+else
+    cat "$output_directory/install_dry_run.err"
+    fail "install.sh --dry-run differs from expected output"
+fi
+
+# 8. A real run without root is refused before any command. Never run this
+#    part as root: it would really install.
+if [[ "$(id -u)" -ne 0 ]]; then
+    install_exit_code=0
+    "$scripts_directory/install.sh" /path/to/haotrannas-server \
+        >"$output_directory/install_no_root.out" 2>"$output_directory/install_no_root.err" \
+        || install_exit_code=$?
+    if [[ "$install_exit_code" -eq 1 ]] && grep -q 'root' "$output_directory/install_no_root.err" \
+        && [[ ! -s "$output_directory/install_no_root.out" ]]; then
+        pass "install.sh refuses a real run without root"
+    else
+        fail "install.sh did not refuse a non-root real run (exit $install_exit_code)"
+    fi
+else
+    echo "SKIP  install.sh root check (tests are running as root)"
+fi
+
+# 9. No binary path, or two, is a usage error.
+install_exit_code=0
+"$scripts_directory/install.sh" --dry-run >/dev/null 2>&1 || install_exit_code=$?
+second_exit_code=0
+"$scripts_directory/install.sh" --dry-run first second >/dev/null 2>&1 || second_exit_code=$?
+if [[ "$install_exit_code" -eq 2 && "$second_exit_code" -eq 2 ]]; then
+    pass "install.sh needs exactly one binary path"
+else
+    fail "install.sh argument check (exit $install_exit_code and $second_exit_code)"
+fi
+
+# 10. The systemd unit passes systemd-analyze verify (see that script for how).
+if command -v systemd-analyze >/dev/null; then
+    if "$tests_directory/verify_systemd_unit.sh"; then
+        pass "haotrannas-server.service passes systemd-analyze verify"
+    else
+        fail "haotrannas-server.service has problems (see above)"
+    fi
+else
+    echo "SKIP  systemd-analyze not installed (CI runs it)"
+fi
+
 echo
 if [[ "$failure_count" -gt 0 ]]; then
     echo "$failure_count test(s) failed"

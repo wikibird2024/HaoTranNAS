@@ -1,0 +1,21 @@
+would run: useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin haotrannas
+would run: install -m 0755 -o root -g root /path/to/haotrannas-server /usr/local/bin/haotrannas-server
+would run: install -d -m 0750 -o root -g haotrannas /etc/haotrannas
+would run: install -m 0640 -o root -g haotrannas NAS_DIRECTORY/config.example.toml /etc/haotrannas/config.toml
+would run: chown haotrannas:haotrannas /srv/haotrannas
+would run: chmod 0700 /srv/haotrannas
+would run: install -m 0644 -o root -g root NAS_DIRECTORY/systemd/haotrannas-server.service /etc/systemd/system/haotrannas-server.service
+would run: systemctl daemon-reload
+would run: systemctl enable haotrannas-server.service
+
+Dry run: nothing changed. After a real run, the next steps are:
+  1. Set the real LAN in pairing_networks:
+       sudo nvim /etc/haotrannas/config.toml
+  2. Create the data files and TLS identity (once, as the service user):
+       sudo -u haotrannas /usr/local/bin/haotrannas-server init --config /etc/haotrannas/config.toml
+  3. Start and check:
+       sudo systemctl start haotrannas-server.service
+       systemctl status haotrannas-server.service
+       journalctl -u haotrannas-server.service -f
+Updating an installed server: run this script again, then
+       sudo systemctl restart haotrannas-server.service
