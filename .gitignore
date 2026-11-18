@@ -15,9 +15,10 @@ config.toml
 wg*.conf
 
 # ── Runtime data: the store itself is not source ─────────────
-data/
-chunks/
-tmp/
+# Anchored to the repo root, so source folders such as lib/data/ stay tracked.
+/data/
+/chunks/
+/tmp/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
@@ -27,6 +28,13 @@ tmp/
 # ── Rust (core, server, cli, desktop) ────────────────────────
 target/
 **/*.rs.bk
+
+# ── Flutter / Dart (mobile) ──────────────────────────────────
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
 
 # ── Android / Gradle (mobile) ────────────────────────────────
 .gradle/
