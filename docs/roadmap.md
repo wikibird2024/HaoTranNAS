@@ -8,7 +8,7 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 
 ```
  Phase 0 ──► M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M6 ──► M7
-  done      done   ▲ HERE (wave 3: upload, resume, crash safety)
+  done      done   done   done   ▲ HERE (wave 4: TLS, pairing, discovery)
 ```
 
 ## Phase 0: foundation

@@ -167,3 +167,39 @@ its checks passed again on `main`.
 2. Start a server yourself and send it garbage:
    `printf 'hello' | nc 127.0.0.1 <port> | xxd` and decode the Error frame
    you get back with `protocol/spec.md` §3 and §11 (hint: code 1).
+
+## Wave 3 — M1 + M2: upload, resume, crash safety (2026-11-18)
+
+```
+ phone/cli                         server
+ FileOffer ──────────────────────► path + size checks → catalog: what is missing?
+ ◄──────────── NeedChunks [i, j]
+ ChunkData i ────────────────────► hash check → tmp → fsync → re-hash → rename → catalog
+ ◄──────────── ChunkOk             (repeat; a crash anywhere = resend, never a broken chunk)
+ Commit ─────────────────────────► re-hash every chunk + whole file → one transaction
+ ◄──────────── CommitOk
+```
+
+| Proof | Result |
+|---|---|
+| Upload + restore, sizes 0, 1, 1 MiB, 3 MiB+17 | Byte-equal (`e2e/scripts/m1_upload.sh`) |
+| Stop after 2 of 5 chunks, upload again | Exactly 3 chunks sent |
+| Same content under another name | 0 chunks sent, no new chunk files |
+| `kill -9` the server mid-upload, restart | Upload resumes; every chunk file still hashes to its name |
+| Flip one byte in a stored chunk | Restore refuses; next upload repairs it |
+| Dart upload engine against the Rust server | 4 tests pass, restored file identical |
+
+### Lessons from wave 3
+
+| What happened | Lesson |
+|---|---|
+| Testing found a gap the spec missed: if `CommitOk` is lost and the phone re-offers *during* the commit, two identical versions can appear | Crash tests find races that reading the spec does not (D-029) |
+| Commit originally checked only the whole-file hash, so one rotten chunk failed a good upload with no way to repair | Check at the smallest unit you can repair (D-027) |
+| The root disk filled up, so tests moved their temp files to `/mnt/storage` | Know where every tool writes |
+
+### Exercise
+
+1. `e2e/scripts/m1_upload.sh`, then look inside the temp data folder it prints:
+   `chunks/ab/cd/…` — each file name is the SHA-256 of its content.
+   Check one: `sha256sum <file>` must print its own name.
+2. Run `cargo test -p haotrannas-e2e kill` and read what the crash test does step by step.

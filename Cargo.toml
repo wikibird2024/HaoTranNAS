@@ -57,3 +57,12 @@ must_use_candidate = "allow"
 dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
+
+# Hashing dominates test time in debug builds (every chunk is SHA-256'd on
+# write, read-back and commit). Optimise only these crates; our own code
+# stays debuggable.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.ring]
+opt-level = 3
