@@ -1,0 +1,55 @@
+# ── Secrets: never commit (docs/conventions.md §7) ─────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+.env
+.env.*
+config.toml
+!config.example.toml
+!**/config.example.toml
+# WireGuard configs hold private keys
+*.conf.wg
+wg*.conf
+
+# ── Runtime data: the store itself is not source ─────────────
+data/
+chunks/
+tmp/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.log
+
+# ── Rust (core, server, cli, desktop) ────────────────────────
+target/
+**/*.rs.bk
+
+# ── Android / Gradle (mobile) ────────────────────────────────
+.gradle/
+build/
+local.properties
+captures/
+*.apk
+*.aab
+.externalNativeBuild/
+.cxx/
+
+# ── Editors and IDEs ─────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+Session.vim
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Claude Code: personal settings stay local ────────────────
+.claude/settings.local.json
