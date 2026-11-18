@@ -1,0 +1,29 @@
+name: nas
+
+on:
+  push:
+    paths:
+      - "nas/**"
+      - ".github/workflows/nas.yml"
+  pull_request:
+    paths:
+      - "nas/**"
+      - ".github/workflows/nas.yml"
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: shellcheck nas/scripts/*.sh nas/scripts/tests/*.sh
+
+      - name: Dry-run tests
+        run: nas/scripts/tests/run_tests.sh
+
+      # Not run: `nft -c -f nas/firewall/haotrannas.nft` needs root (netlink),
+      # so the firewall syntax is checked on the NAS only (see nas/RUNBOOK.md).
