@@ -10,12 +10,15 @@ publish = false
 [lib]
 name = "haotrannas_e2e"
 
+# The server and cli run as programs; core only builds and reads raw frames
+# for the tests that break the protocol on purpose.
 [dependencies]
+haotrannas-core = { workspace = true }
+tempfile = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 serde_json = { workspace = true }
-anyhow = { workspace = true }
 
 [lints]
 workspace = true

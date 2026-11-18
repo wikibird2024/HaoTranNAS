@@ -489,6 +489,7 @@ name = "haotrannas-e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "haotrannas-core",
  "serde_json",
  "tempfile",
 ]

@@ -21,3 +21,8 @@ Run from the repo root (Cargo workspace).
 Library only, nothing to run. Cargo features: `tokio` (async frame I/O,
 `io.rs`) and `tls` (rustls + ring, TLS 1.3 only, `tls.rs`). Server and cli
 turn both on.
+
+`session.rs` is the spec §6 state machine (pure: state + message type →
+allowed, or the fatal error code). `io.rs` reads and writes whole frames on
+any tokio stream; the length field is checked from its 4 bytes before the
+body is awaited, and a dropped read loses no bytes.
