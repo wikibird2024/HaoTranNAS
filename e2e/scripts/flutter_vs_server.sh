@@ -6,7 +6,8 @@
 #
 # Usage: e2e/scripts/flutter_vs_server.sh
 #   Builds the server, makes a temp data folder, starts the server, runs
-#   `flutter test --tags server` with NAS_SERVER_ADDR set, stops the server.
+#   `flutter test --tags server` with NAS_SERVER_ADDR, NAS_SERVER_BIN and
+#   NAS_DATA_DIR set, stops the server.
 #   Exit 0 only if every Dart server test passed.
 set -euo pipefail
 
@@ -39,6 +40,11 @@ if [[ -z "$NAS_SERVER_ADDR" || -z "$server_pid" ]]; then
 fi
 echo "server at $NAS_SERVER_ADDR (pid $server_pid)"
 
+# Dart server tests may also call `haotrannas-server restore` to check an
+# uploaded file byte for byte, so they get the binary and the data folder.
 cd mobile
-NAS_SERVER_ADDR="$NAS_SERVER_ADDR" flutter test --tags server
+NAS_SERVER_ADDR="$NAS_SERVER_ADDR" \
+    NAS_SERVER_BIN="$target_directory/debug/haotrannas-server" \
+    NAS_DATA_DIR="$data_directory" \
+    flutter test --tags server
 echo "flutter_vs_server: OK"
