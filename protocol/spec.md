@@ -197,14 +197,14 @@ The short-id comparison by the user is the v1 defence; QR code or PAKE later.
 | FileOffer | Path rules (section 10) | `BAD_PATH` |
 | | Chunk count > 65 536 | `TOO_LARGE` |
 | | Chunk count ≠ `ceil(size / 1 MiB)` | `BAD_ARGUMENT` |
-| | Latest version of (device, path) has the same `size_bytes`, `modified_time_ms` and `file_sha256` → reply `upload_id 0`, `existing_version_id` = that version, empty list | — |
+| | Latest version of (device, path) has the same `size_bytes`, `modified_time_ms` and `file_sha256`, **and none of its chunks is marked bad** → reply `upload_id 0`, `existing_version_id` = that version, empty list | — |
 | | Otherwise: new upload (random `upload_id`, 1 ..< 2^63); `missing_indexes` = for each **distinct** hash not stored (or marked bad), the **first** index that has it, ascending | — |
 | ChunkData | Upload exists and belongs to this device | `UNKNOWN_UPLOAD` |
 | | `chunk_index` < chunk count | `BAD_ARGUMENT` |
 | | `chunk_sha256` = offered hash at that index | `CHUNK_HASH_MISMATCH` |
 | | `data` length = expected size for that index | `CHUNK_SIZE_WRONG` |
 | | `SHA-256(data)` = `chunk_sha256` | `CHUNK_HASH_MISMATCH` |
-| | Chunk already stored → ChunkOk without writing (safe to repeat) | — |
+| | Chunk already stored **and not bad** → ChunkOk without writing (safe to repeat). A chunk marked bad is overwritten (atomic replace) and marked ok again | — |
 | | Store atomically (temp file, fsync, verify, rename, fsync directory) | `DISK_FULL`, `INTERNAL` |
 | Commit | Upload exists and belongs to this device | `UNKNOWN_UPLOAD` |
 | | Every distinct hash is stored and not bad | `CHUNKS_MISSING` |
@@ -213,6 +213,16 @@ The short-id comparison by the user is the v1 defence; QR code or PAKE later.
 
 A client that loses `CommitOk` sends the same FileOffer again. The server answers
 with `existing_version_id`, so no duplicate version is made.
+
+On `CHUNKS_MISSING` (a chunk was marked bad by scrub after the offer) the client
+sends the same FileOffer again and uploads what the new NeedChunks asks for.
+It never retries `Commit` alone.
+
+**Repair of bit rot:** scrub marks a damaged chunk bad. It is repaired when any
+device offers a file that contains it again: the offer lists the chunk as
+missing and the upload overwrites it. A phone re-offers files it already backed
+up only through its "verify backup" action (M6); the ZFS mirror is the other
+repair path.
 
 ## 9. Browse and download
 
@@ -291,7 +301,7 @@ An unknown reason received is shown as `UNKNOWN(<reason>)`, not malformed.
 | Service | `_haotrannas._tcp.local` |
 | Port | The server's TLS port |
 | TXT | `v=1`, `fp=<first 16 lowercase hex chars of the server fingerprint>` |
-| Client | Accept a result only if `fp` matches the pinned fingerprint. Then connect and check the full pin |
+| Client | Accept a result only if `fp` matches the pinned fingerprint. Use the IPv4 (A record) address: the NAS firewall opens the port on IPv4 only. Then connect and check the full pin |
 
 ## 14. Limits (same names in Rust `core/src/limits.rs` and Dart `lib/protocol/limits.dart`)
 

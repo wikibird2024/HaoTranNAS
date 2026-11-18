@@ -256,7 +256,7 @@ it can never race an upload.
 | Server crash before Commit | Upload not visible; phone retries | 🟢 |
 | Chunk corrupted in transit | Hash mismatch → `Error`, phone resends | 🟢 |
 | `CommitOk` lost | Phone re-offers; server answers "already have version N" | 🟢 |
-| Bit rot on disk | Scrub marks the chunk bad; next offer asks the phone for it again; ZFS mirror also repairs | 🟢 / 🟡 ZFS |
+| Bit rot on disk | Scrub marks the chunk bad. Repaired by the ZFS mirror, or when a phone re-offers the file ("verify backup", M6) | 🟡 needs ZFS or verify |
 | Disk full | `Error(DiskFull)` before writing, nothing committed | 🟢 |
 | Stolen phone | Delete its row in `devices` → its cert is refused | 🟢 |
 

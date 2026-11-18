@@ -2,7 +2,18 @@ name: rust
 
 on:
   push:
+    paths: &rust_paths
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "core/**"
+      - "server/**"
+      - "cli/**"
+      - "e2e/**"
+      - "protocol/**"
+      - ".github/workflows/rust.yml"
   pull_request:
+    paths: *rust_paths
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +30,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The vectors must be exactly the generator's output: never hand-edited
+      # to make a failing test pass (docs/conventions.md section 3).
+      - name: Test vectors match the generator
+        run: |
+          python3 -I protocol/tools/gen_vectors.py
+          git diff --exit-code protocol/vectors
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -33,18 +51,10 @@ jobs:
 
       # TLS must use the ring provider only. aws-lc-rs / aws-lc-sys come in when
       # a rustls-family crate has its default features on.
-      # `cargo tree -i <name>` fails when the package is absent, which is what
-      # we want. A bare `! cmd` line would not fail the step under `set -e`,
-      # hence the `if`. The grep over the full tree also covers all targets
-      # and features, and fails loudly if `cargo tree` itself breaks.
+      # The tree covers all targets and features; the step fails loudly if
+      # `cargo tree` itself breaks.
       - name: No aws-lc in the dependency tree
         run: |
-          for package in aws-lc-sys aws-lc-rs; do
-            if cargo tree --workspace -i "$package"; then
-              echo "$package found in the dependency tree" >&2
-              exit 1
-            fi
-          done
           cargo tree --workspace --all-features --target all --edges all --prefix none > "$RUNNER_TEMP/dependency-tree.txt"
           if grep -E '^aws-lc-(rs|sys) ' "$RUNNER_TEMP/dependency-tree.txt"; then
             echo "aws-lc found in the dependency tree" >&2

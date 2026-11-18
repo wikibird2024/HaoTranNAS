@@ -2,7 +2,12 @@ name: Mobile
 
 on:
   push:
+    paths: &mobile_paths
+      - "mobile/**"
+      - "protocol/**"
+      - ".github/workflows/mobile.yml"
   pull_request:
+    paths: *mobile_paths
 
 jobs:
   mobile:

@@ -37,7 +37,7 @@ been shown. Code alone doesn't count.
 | M3n | NAS host ready | nas | Linux admin, ZFS | Server runs as a service on the NAS; survives reboot | ⚪ |
 | M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | ⚪ |
 | M5 | Browse + download | server, mobile, cli | Read path | Restore a photo to the phone; hash matches | ⚪ |
-| M6 | Remote + upkeep: WireGuard, scrub, cleanup | nas, server | Networking, data care | Backup works on 4G; scrub report clean | ⚪ |
+| M6 | Remote + upkeep: WireGuard, scrub, cleanup, phone "verify backup" | nas, server, mobile | Networking, data care | Backup works on 4G; scrub report clean; a corrupted chunk is repaired by verify | ⚪ |
 | M7 | Desktop app | desktop, core | Reusing core | PC folder backed up and restored | ⚪ |
 
 ## Build order and why
