@@ -206,7 +206,8 @@ message and no token.
    tls/server.key server.crt          server identity (clients pin its SHA-256)
    tls/device-ca.key device-ca.crt    signs device certificates at pairing
    admin.sock                local admin commands (mode 0600)
-   config.toml
+
+ /etc/haotrannas/config.toml settings (root:haotrannas 0640), see nas/config.example.toml
 ```
 
 Chunk write is atomic: write to `tmp/` → fsync → re-hash and compare → rename
