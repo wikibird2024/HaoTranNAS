@@ -36,11 +36,14 @@ void main() {
       backupStatusSourceProvider.overrideWithValue(source),
       identityProvider.overrideWith(() => identity),
       serverConnectionProvider.overrideWith(() => connection),
+      serverFinderProvider.overrideWithValue(
+        ({pinnedFingerprintPrefix}) async => const [],
+      ),
     ],
   );
 
   group('status', () {
-    testWidgets('shows server id, state, last run; connects on open', (
+    testWidgets('headline, state + reason, last run; connects on open', (
       tester,
     ) async {
       source.lastRun = BackupRunSummary(
@@ -52,11 +55,9 @@ void main() {
       );
       await pumpWithFakes(tester, const StatusScreen());
 
-      expect(find.text('Server id $testShortId'), findsOneWidget);
-      expect(
-        find.text('Not connected: No server address known'),
-        findsOneWidget,
-      );
+      expect(find.text('Last backup did not finish'), findsOneWidget);
+      expect(find.text('Not connected'), findsOneWidget);
+      expect(find.text('No server address known'), findsOneWidget);
       expect(
         find.text(
           '2026-11-19 08:30: 12 uploaded (3.0 MB), 300 already there, '
@@ -67,12 +68,69 @@ void main() {
       expect(connection.connectCalls, 1);
     });
 
-    testWidgets('"Back up now" and "Verify backup" call the source', (
+    testWidgets('a clean last run says "Backed up"; never run says so', (
+      tester,
+    ) async {
+      await pumpWithFakes(tester, const StatusScreen());
+      expect(find.text('Not backed up yet'), findsOneWidget);
+      expect(find.text('Tap "Back up now" to start.'), findsOneWidget);
+
+      source.lastRun = BackupRunSummary(
+        finishedAt: DateTime(2026, 11, 19, 8, 30),
+        filesUploaded: 2,
+        filesAlreadyBackedUp: 10,
+        filesFailed: 0,
+        bytesUploaded: 2048,
+      );
+      source.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.text('Backed up'), findsOneWidget);
+    });
+
+    testWidgets('folders card names the chosen albums', (tester) async {
+      await source.updateSettings(
+        const BackupSettings(
+          chosenFolderIds: {'cam', 'wa'},
+          chosenFolderNames: ['Camera', 'WhatsApp Images'],
+        ),
+      );
+      await pumpWithFakes(tester, const StatusScreen());
+      expect(find.text('Camera, WhatsApp Images'), findsOneWidget);
+    });
+
+    testWidgets('a run that stopped early says how many are left', (
+      tester,
+    ) async {
+      source.lastRun = BackupRunSummary(
+        finishedAt: DateTime(2026, 11, 19, 8, 30),
+        filesUploaded: 5,
+        filesAlreadyBackedUp: 0,
+        filesFailed: 0,
+        bytesUploaded: 0,
+        filesLeft: 37,
+        problem: 'Time is up for this run; the next run goes on.',
+      );
+      await pumpWithFakes(tester, const StatusScreen());
+      expect(find.text('37 files still to back up'), findsOneWidget);
+    });
+
+    testWidgets('automatic backup switch sits on the Backup tab', (
+      tester,
+    ) async {
+      await pumpWithFakes(tester, const StatusScreen());
+      expect(find.text('Runs by itself · only on Wi-Fi'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('backup.autoOn')));
+      await tester.pumpAndSettle();
+      expect(source.settings.isBackupOn, isFalse);
+      expect(find.text('Off: only "Back up now" backs up'), findsOneWidget);
+    });
+
+    testWidgets('"Back up now" and "Check backup" call the source', (
       tester,
     ) async {
       await pumpWithFakes(tester, const StatusScreen());
       await tester.tap(find.text('Back up now'));
-      await tester.tap(find.text('Verify backup'));
+      await tester.tap(find.text('Check backup'));
       expect(source.runNowCalls, 1);
       expect(source.verifyAllCalls, 1);
     });
@@ -92,11 +150,11 @@ void main() {
       await pumpWithFakes(tester, const StatusScreen(), isAnimating: true);
 
       expect(find.text('Backing up…'), findsOneWidget);
-      expect(find.text('1 240 of ~8 300 photos checked'), findsOneWidget);
+      expect(find.text('1 240 of ~8 300 files done'), findsOneWidget);
       expect(find.textContaining('35 uploaded · 420.0 MB · '), findsOneWidget);
       expect(find.text('Now: DCIM/Camera/IMG_1.jpg'), findsOneWidget);
       expect(find.text('Back up now'), findsNothing);
-      await tester.tap(find.text('Verify backup'));
+      await tester.tap(find.text('Check backup'));
       expect(source.verifyAllCalls, 0);
       await tester.tap(find.text('Stop'));
       expect(source.stopCalls, 1);
@@ -118,9 +176,7 @@ void main() {
   });
 
   group('folders', () {
-    testWidgets('tick a folder, Save → settings keep the choice', (
-      tester,
-    ) async {
+    testWidgets('a tick is saved at once (no Save button)', (tester) async {
       source.folders = const [
         BackupFolderChoice(
           id: 'cam',
@@ -137,13 +193,19 @@ void main() {
       ];
       await pumpWithFakes(tester, const FoldersScreen());
       await tester.pumpAndSettle();
-      expect(find.text('6 200 items'), findsOneWidget);
+      expect(find.text('6 200 files'), findsOneWidget);
+      expect(find.text('Save'), findsNothing);
 
       await tester.tap(find.byKey(const Key('folder.shots')));
       await tester.pump();
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
       expect(source.settings.chosenFolderIds, {'cam', 'shots'});
+      expect(source.settings.chosenFolderNames, ['Camera', 'Screenshots']);
+
+      await tester.tap(find.byKey(const Key('folder.cam')));
+      await tester.tap(find.byKey(const Key('folder.shots')));
+      await tester.pump();
+      expect(source.settings.chosenFolderIds, isEmpty);
+      expect(find.textContaining('nothing is backed up'), findsOneWidget);
     });
 
     testWidgets('no albums: tells how to allow photo access', (tester) async {
@@ -166,12 +228,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(source.settings.isChargingOnly, isTrue);
 
-      await tester.tap(find.byKey(const Key('settings.backupOn')));
-      await tester.pumpAndSettle();
-      expect(source.settings.isBackupOn, isFalse);
       // Each switch changed only its own value.
       expect(source.settings.isWifiOnly, isFalse);
-      expect(source.settings.isChargingOnly, isTrue);
+      expect(source.settings.isBackupOn, isTrue);
+      expect(
+        find.text('Server id $testShortId · this phone is device 3'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('unpair asks first; Cancel keeps the pairing', (tester) async {

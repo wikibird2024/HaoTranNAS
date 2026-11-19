@@ -690,14 +690,6 @@ bool _sameBytes(Uint8List first, Uint8List second) =>
 
 // ── Restore to the phone ──────────────────────────────────────────────
 
-/// Adds a restored file to the phone's gallery. Phone-only work (Android
-/// MediaStore): not written yet. ⚪ Wire it to photo_manager's
-/// `PhotoManager.editor.saveImageWithPath` / `saveVideo` on a real phone.
-typedef AddToGallery = Future<void> Function(
-  String localPath,
-  String remotePath,
-);
-
 /// Where restored files go: `<documents>/restored/<device id>/<remote path>`.
 /// [remotePath] passed the path rules, so it has no `..` or leading `/`.
 String restorePathFor(
@@ -730,8 +722,8 @@ String freeOutputPath(String wantedPath) {
 }
 
 /// Restores one backed-up file into [restoreFolder] (the app's documents
-/// folder in the app) under a free name, then hands it to
-/// [addToGallery] when given. Never replaces an existing file.
+/// folder in the app) under a free name. Never replaces an existing file.
+/// The phone app then moves photos and videos into the gallery itself.
 Future<DownloadResult> restoreToPhone({
   required RemoteFiles files,
   required Directory restoreFolder,
@@ -740,7 +732,6 @@ Future<DownloadResult> restoreToPhone({
   int versionId = 0,
   void Function(DownloadProgress progress)? onProgress,
   DownloadCancel? cancel,
-  AddToGallery? addToGallery,
 }) async {
   final pathProblemText = pathProblem(remotePath);
   if (pathProblemText != null) {
@@ -752,7 +743,7 @@ Future<DownloadResult> restoreToPhone({
   final outputPath = freeOutputPath(
     restorePathFor(restoreFolder, deviceId, remotePath),
   );
-  final result = await files.download(
+  return files.download(
     deviceId: deviceId,
     remotePath: remotePath,
     versionId: versionId,
@@ -760,8 +751,4 @@ Future<DownloadResult> restoreToPhone({
     onProgress: onProgress,
     cancel: cancel,
   );
-  if (result is DownloadDone && addToGallery != null) {
-    await addToGallery(result.outputPath, remotePath);
-  }
-  return result;
 }

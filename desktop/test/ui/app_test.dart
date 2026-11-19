@@ -181,7 +181,7 @@ void main() {
     await tester.tap(find.text('Back up now').first);
     await tester.pump();
     expect(backup.runs, 1);
-    expect(find.text('3 of ~10 files checked'), findsOneWidget);
+    expect(find.text('3 of ~10 files done'), findsOneWidget);
     expect(find.text('Now: Documents/a.txt'), findsOneWidget);
     await tester.tap(find.text('Stop'));
     await tester.pump();

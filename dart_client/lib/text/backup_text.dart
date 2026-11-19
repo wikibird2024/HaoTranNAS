@@ -12,6 +12,7 @@ String runSummaryText(BackupRunSummary run) {
       run.filesUploaded == 0 &&
       run.filesAlreadyBackedUp == 0 &&
       run.filesFailed == 0 &&
+      run.filesLeft == 0 &&
       problem == null;
   if (isNothingNew) {
     return '${formatDateTime(run.finishedAt)}: up to date, nothing new';
@@ -20,6 +21,7 @@ String runSummaryText(BackupRunSummary run) {
     '${run.filesUploaded} uploaded (${formatBytes(run.bytesUploaded)})',
     '${run.filesAlreadyBackedUp} already there',
     if (run.filesFailed > 0) '${run.filesFailed} failed',
+    if (run.filesLeft > 0) '${run.filesLeft} still to do',
   ];
   return '${formatDateTime(run.finishedAt)}: ${parts.join(', ')}'
       '${problem == null ? '' : '\n$problem'}';
@@ -35,19 +37,49 @@ String verifySummaryText(VerifySummary verify) {
       '${problem == null ? '' : '\n$problem'}';
 }
 
-/// The lines under the progress bar while a run goes on.
+/// How the backup looks at a glance: the colour of the headline.
+enum BackupHealth { good, warning, busy }
+
+/// The one line the Backup screen leads with: is everything backed up?
+/// Built from the activity and the last run only (no library scan).
+({String text, BackupHealth health}) backupHeadline(
+  BackupActivity activity,
+  BackupRunSummary? lastRun,
+) => switch ((activity, lastRun)) {
+  (BackupActivity.backingUp, _) => (
+    text: 'Backing up…',
+    health: BackupHealth.busy,
+  ),
+  (BackupActivity.verifying, _) => (
+    text: 'Checking the backup…',
+    health: BackupHealth.busy,
+  ),
+  (_, null) => (text: 'Not backed up yet', health: BackupHealth.warning),
+  (_, final BackupRunSummary run) when run.filesLeft > 0 => (
+    text: '${formatCount(run.filesLeft)} files still to back up',
+    health: BackupHealth.warning,
+  ),
+  (_, final BackupRunSummary run)
+      when run.problem != null || run.filesFailed > 0 =>
+    (text: 'Last backup did not finish', health: BackupHealth.warning),
+  _ => (text: 'Backed up', health: BackupHealth.good),
+};
+
+/// The lines under the progress bar while a run goes on. A backup says
+/// "done" (uploaded or already there), a check says "checked", so the
+/// two never read alike.
 List<String> liveProgressLines(
   BackupActivity activity,
   BackupLiveProgress? progress,
   DateTime now, {
-  String itemsWord = 'photos',
+  String itemsWord = 'files',
 }) {
   if (progress == null) return const ['Getting ready…'];
   final checkedText = activity == BackupActivity.verifying
       ? '${formatCount(progress.itemsChecked)} of '
-            '${formatCount(progress.itemsTotal)} files checked'
+            '${formatCount(progress.itemsTotal)} $itemsWord checked'
       : '${formatCount(progress.itemsChecked)} of '
-            '~${formatCount(progress.itemsTotal)} $itemsWord checked';
+            '~${formatCount(progress.itemsTotal)} $itemsWord done';
   final speed = progress.bytesPerSecond(now);
   return [
     checkedText,

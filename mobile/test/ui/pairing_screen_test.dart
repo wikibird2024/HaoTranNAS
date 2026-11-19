@@ -186,8 +186,7 @@ void main() {
         ),
       ],
     );
-    await tester.tap(find.text('Search on Wi-Fi'));
-    await tester.pumpAndSettle();
+    // The screen searched on open: no tap needed.
     expect(find.text('HaoTranNAS'), findsOneWidget);
     await tester.tap(find.text('192.168.1.9:47100'));
     await tester.pumpAndSettle();

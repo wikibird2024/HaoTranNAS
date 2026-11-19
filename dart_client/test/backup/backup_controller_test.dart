@@ -286,6 +286,25 @@ void main() {
       }
     });
 
+    test('run summary keeps files left; old saved ones read as 0', () {
+      final run = BackupRunSummary(
+        finishedAt: DateTime(2026, 11, 19),
+        filesUploaded: 3,
+        filesAlreadyBackedUp: 1,
+        filesFailed: 0,
+        bytesUploaded: 10,
+        filesLeft: 37,
+      );
+      expect(decodeRunSummary(encodeRunSummary(run))!.filesLeft, 37);
+      expect(
+        decodeRunSummary(
+          '{"finished_at_ms":1,"files_uploaded":0,'
+          '"files_already_backed_up":0,"files_failed":0,"bytes_uploaded":0}',
+        )!.filesLeft,
+        0,
+      );
+    });
+
     test('summaries: junk → null', () {
       expect(decodeRunSummary('{"finished_at_ms":"x"}'), isNull);
       expect(decodeVerifySummary('nope'), isNull);
@@ -363,6 +382,26 @@ void main() {
         reason: 'saved before D-037: Camera default',
       );
       expect(decodeSettings('{"folder_ids":[1]}').chosenFolderIds, isNull);
+    });
+
+    test('settings keep folder names for display (D-042)', () {
+      const settings = BackupSettings(
+        chosenFolderIds: {'cam'},
+        chosenFolderNames: ['Camera', 'WhatsApp Images'],
+      );
+      expect(decodeSettings(encodeSettings(settings)).chosenFolderNames, [
+        'Camera',
+        'WhatsApp Images',
+      ]);
+      expect(
+        decodeSettings('{"folder_ids":["cam"]}').chosenFolderNames,
+        isNull,
+      );
+      expect(decodeSettings('{"folder_names":[1]}').chosenFolderNames, isNull);
+      expect(
+        settings.copyWith(isWifiOnly: false).chosenFolderNames,
+        settings.chosenFolderNames,
+      );
     });
   });
 

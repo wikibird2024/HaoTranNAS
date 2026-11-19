@@ -1,10 +1,10 @@
 /// Which phone albums to back up (D-037): one checkbox each, with the
-/// number of photos. Never chosen = Camera only. Save keeps the choice
-/// in the backup settings. Author: Hao Tran.
+/// number of files. Never chosen = Camera only. Each tick is saved at
+/// once (no Save button: Back never loses a choice). Author: Hao Tran.
 ///
 /// ```
 ///  open ─► loadFolders (asks for photo access) ─► list, Camera first
-///  tick / untick ─► Save ─► settings.chosenFolderIds ─► back
+///  tick / untick ─► settings.chosenFolderIds (saved at once)
 /// ```
 library;
 
@@ -55,12 +55,21 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
     }
   }
 
-  Future<void> _save() async {
-    final source = ref.read(backupStatusSourceProvider);
-    await source.updateSettings(
-      source.settings.copyWith(chosenFolderIds: {..._chosenIds}),
+  void _setChosen(String folderId, bool isChosen) {
+    setState(
+      () => isChosen ? _chosenIds.add(folderId) : _chosenIds.remove(folderId),
     );
-    if (mounted) Navigator.of(context).pop();
+    final source = ref.read(backupStatusSourceProvider);
+    source.updateSettings(
+      source.settings.copyWith(
+        chosenFolderIds: {..._chosenIds},
+        // Names too, so the Backup tab can show them (D-042).
+        chosenFolderNames: [
+          for (final folder in _folders ?? const <BackupFolderChoice>[])
+            if (_chosenIds.contains(folder.id)) folder.name,
+        ],
+      ),
+    );
   }
 
   @override
@@ -68,15 +77,7 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
     final folders = _folders;
     final problem = _problem;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Folders to back up'),
-        actions: [
-          TextButton(
-            onPressed: folders == null || folders.isEmpty ? null : _save,
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Folders to back up')),
       body: switch ((folders, problem)) {
         (_, final String text) => Center(
           child: Padding(
@@ -87,24 +88,25 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
         (null, _) => const Center(child: CircularProgressIndicator()),
         (final List<BackupFolderChoice> list, _) => ListView(
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Text(
-                'New photos land in Camera, so it is backed up first. '
-                'Pick more folders if you want them too.',
+                _chosenIds.isEmpty
+                    ? 'Nothing is chosen, so nothing is backed up. Tick at '
+                          'least Camera.'
+                    : 'New photos land in Camera, so it is backed up first. '
+                          'Tick more folders if you want them too. Changes '
+                          'are saved at once.',
               ),
             ),
             for (final folder in list)
               CheckboxListTile(
                 key: Key('folder.${folder.id}'),
                 title: Text(folder.name),
-                subtitle: Text('${formatCount(folder.itemCount)} items'),
+                subtitle: Text('${formatCount(folder.itemCount)} files'),
                 value: _chosenIds.contains(folder.id),
-                onChanged: (isChosen) => setState(
-                  () => isChosen == true
-                      ? _chosenIds.add(folder.id)
-                      : _chosenIds.remove(folder.id),
-                ),
+                onChanged: (isChosen) =>
+                    _setChosen(folder.id, isChosen == true),
               ),
           ],
         ),

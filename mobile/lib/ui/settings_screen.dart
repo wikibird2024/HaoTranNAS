@@ -1,6 +1,7 @@
-/// Settings tab: backup on/off, Wi-Fi only, charging only (through
-/// `BackupStatusSource`), the paired NAS, the debug log, and unpair
-/// (deletes this phone's certificate and key after a confirm dialog).
+/// Settings tab: when automatic backup may run (Wi-Fi only, charging
+/// only, through `BackupStatusSource`; the on/off switch is on the Backup
+/// tab), the paired NAS, unpair (deletes this phone's certificate and key
+/// after a confirm dialog) and, under Advanced, the debug log.
 /// Author: Hao Tran.
 library;
 
@@ -54,14 +55,7 @@ class SettingsScreen extends ConsumerWidget {
           void update(BackupSettings changed) => source.updateSettings(changed);
           return ListView(
             children: [
-              SwitchListTile(
-                key: const Key('settings.backupOn'),
-                title: const Text('Automatic backup'),
-                subtitle: const Text('Back up new photos and files by itself'),
-                value: settings.isBackupOn,
-                onChanged: (isOn) =>
-                    update(settings.copyWith(isBackupOn: isOn)),
-              ),
+              const _SectionTitle('Automatic backup'),
               SwitchListTile(
                 key: const Key('settings.wifiOnly'),
                 title: const Text('Only on Wi-Fi'),
@@ -73,11 +67,19 @@ class SettingsScreen extends ConsumerWidget {
               SwitchListTile(
                 key: const Key('settings.chargingOnly'),
                 title: const Text('Only while charging'),
+                subtitle: const Text('Wait until the phone is plugged in'),
                 value: settings.isChargingOnly,
                 onChanged: (isOn) =>
                     update(settings.copyWith(isChargingOnly: isOn)),
               ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  '"Back up now" runs on any network, charging or not.',
+                ),
+              ),
               const Divider(),
+              const _SectionTitle('NAS'),
               if (identity != null)
                 ListTile(
                   leading: const Icon(Icons.dns),
@@ -88,6 +90,17 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                 ),
               ListTile(
+                leading: Icon(
+                  Icons.link_off,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: const Text('Unpair this phone'),
+                subtitle: const Text('Backups on the NAS stay'),
+                onTap: () => _confirmUnpair(context, ref),
+              ),
+              const Divider(),
+              const _SectionTitle('Advanced'),
+              ListTile(
                 leading: const Icon(Icons.receipt_long),
                 title: const Text('Debug log'),
                 subtitle: const Text('What the app sent and received'),
@@ -97,18 +110,26 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                 ),
               ),
-              ListTile(
-                leading: Icon(
-                  Icons.link_off,
-                  color: Theme.of(context).colorScheme.error,
-                ),
-                title: const Text('Unpair this phone'),
-                onTap: () => _confirmUnpair(context, ref),
-              ),
             ],
           );
         },
       ),
     );
   }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+    child: Text(
+      text,
+      style: Theme.of(context).textTheme.titleSmall
+          ?.copyWith(color: Theme.of(context).colorScheme.primary),
+    ),
+  );
 }

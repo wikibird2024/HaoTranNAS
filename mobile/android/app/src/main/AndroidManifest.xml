@@ -17,6 +17,10 @@
     <!-- Without this Android strips GPS from the photo bytes we read, and
          the backup would not be a true copy. -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
+    <!-- Restore into the gallery: Android 10+ needs no permission for the
+         app's own new files; Android 9 and older need this one. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
 
     <application
         android:label="HaoTranNAS"

@@ -18,22 +18,24 @@ import 'package:haotrannas_client/backup/backup_controller.dart';
 import 'package:haotrannas_client/backup/backup_runner.dart';
 import 'package:haotrannas_client/backup/backup_state_store.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
-import 'package:haotrannas_client/client/download_engine.dart';
 import 'package:haotrannas_client/discovery/discovery.dart';
 
 import '../backup/background.dart';
+import '../backup/gallery.dart';
 import '../backup/photo_media_source.dart';
 import '../core/transport/multicast_lock.dart';
 
 export 'package:haotrannas_client/app/client_providers.dart';
 
+export '../backup/gallery.dart' show AddToGallery, addToPhoneGallery;
+
 /// Sent in Hello (`client_software`); `main()` puts it in
 /// [clientSoftwareProvider], the background job uses it directly.
 const appClientSoftware = 'haotrannas-mobile 0.1.0';
 
-/// Adds a restored file to the phone's gallery. Null = files stay only
-/// in the app's folder. ⚪ Android MediaStore insertion is phone-only
-/// work, not written yet (see `AddToGallery`).
+/// Moves a restored photo or video into the phone's gallery. Null (tests,
+/// not Android) = restored files stay only in the app's folder. `main()`
+/// overrides it with [addToPhoneGallery] on Android.
 final addToGalleryProvider = Provider<AddToGallery?>((ref) => null);
 
 /// The real backup side over [store]; `main()` overrides

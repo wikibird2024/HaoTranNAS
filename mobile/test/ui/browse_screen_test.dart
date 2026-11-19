@@ -90,19 +90,84 @@ void main() {
     await tester.tap(find.text('IMG_1.jpg'));
     await tester.pumpAndSettle();
     expect(find.text('DCIM/IMG_1.jpg'), findsOneWidget);
-    expect(find.text('9'), findsOneWidget);
+    expect(find.text('Pixel › DCIM'), findsNothing, reason: 'file page');
 
     await tester.tap(find.text('Restore to phone'));
     await tester.pumpAndSettle();
     expect(files.downloads, ['DCIM/IMG_1.jpg']);
     expect(
-      find.textContaining('Saved to ').evaluate().single.widget,
-      isA<Text>().having(
-        (text) => text.data,
-        'data',
-        endsWith('/device-3/DCIM/IMG_1.jpg'),
+      find.text(
+        'Saved inside this app. Only photos and videos go to the gallery.',
+      ),
+      findsOneWidget,
+      reason: 'no gallery in tests',
+    );
+  });
+
+  testWidgets('a restored photo goes on to the gallery', (tester) async {
+    final files = FakeRemoteFiles({});
+    final galleryCalls = <(String, String)>[];
+    await pumpScreen(
+      tester,
+      FileDetailsScreen(
+        files: files,
+        deviceId: 3,
+        remotePath: 'DCIM/IMG_1.jpg',
+        entry: fileEntry('IMG_1.jpg'),
+      ),
+      overrides: [
+        addToGalleryProvider.overrideWithValue((
+          localPath,
+          fileName,
+          takenAt,
+        ) async {
+          galleryCalls.add((localPath, fileName));
+          return 'Pictures/HaoTranNAS';
+        }),
+      ],
+    );
+    await tester.tap(find.text('Restore to phone'));
+    await tester.pumpAndSettle();
+    expect(galleryCalls.single.$1, endsWith('/device-3/DCIM/IMG_1.jpg'));
+    expect(galleryCalls.single.$2, 'IMG_1.jpg');
+    expect(
+      find.text('Saved to the gallery, album "HaoTranNAS".'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a gallery refusal keeps the file and says so', (tester) async {
+    await pumpScreen(
+      tester,
+      FileDetailsScreen(
+        files: FakeRemoteFiles({}),
+        deviceId: 3,
+        remotePath: 'clip.mp4',
+        entry: fileEntry('clip.mp4'),
+      ),
+      overrides: [
+        addToGalleryProvider.overrideWithValue(
+          (localPath, fileName, takenAt) async => throw StateError('no room'),
+        ),
+      ],
+    );
+    await tester.tap(find.text('Restore to phone'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('kept inside this app'), findsOneWidget);
+  });
+
+  testWidgets('folder title shows where you are', (tester) async {
+    await pumpScreen(
+      tester,
+      FolderScreen(
+        files: FakeRemoteFiles({'DCIM/Camera': []}),
+        deviceId: 3,
+        deviceName: 'Pixel',
+        path: 'DCIM/Camera',
       ),
     );
+    expect(find.text('Camera'), findsOneWidget);
+    expect(find.text('Pixel › DCIM › Camera'), findsOneWidget);
   });
 
   testWidgets('restore shows progress and Cancel stops it', (tester) async {

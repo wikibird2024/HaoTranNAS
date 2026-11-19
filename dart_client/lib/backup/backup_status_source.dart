@@ -24,6 +24,7 @@ final class BackupRunSummary {
     required this.filesAlreadyBackedUp,
     required this.filesFailed,
     required this.bytesUploaded,
+    this.filesLeft = 0,
     this.problem,
   });
 
@@ -34,6 +35,11 @@ final class BackupRunSummary {
   final int filesAlreadyBackedUp;
   final int filesFailed;
   final int bytesUploaded;
+
+  /// New or changed files the run found but did not reach (time up,
+  /// Stop, link lost). A lower bound: a run that stopped mid-scan never
+  /// saw the rest of the library.
+  final int filesLeft;
 
   /// Why the run stopped early (no Wi-Fi, server offline), or null.
   final String? problem;
@@ -115,6 +121,7 @@ final class BackupSettings {
     this.isWifiOnly = true,
     this.isChargingOnly = false,
     this.chosenFolderIds,
+    this.chosenFolderNames,
   });
 
   /// Automatic background backup runs at all.
@@ -129,16 +136,23 @@ final class BackupSettings {
   /// Albums to back up; null = never chosen: the Camera album (D-037).
   final Set<String>? chosenFolderIds;
 
+  /// The chosen albums' names, saved with the ids so the Backup tab can
+  /// show them without listing the albums (which asks for photo access).
+  /// For display only; null = not known (settings saved before D-042).
+  final List<String>? chosenFolderNames;
+
   BackupSettings copyWith({
     bool? isBackupOn,
     bool? isWifiOnly,
     bool? isChargingOnly,
     Set<String>? chosenFolderIds,
+    List<String>? chosenFolderNames,
   }) => BackupSettings(
     isBackupOn: isBackupOn ?? this.isBackupOn,
     isWifiOnly: isWifiOnly ?? this.isWifiOnly,
     isChargingOnly: isChargingOnly ?? this.isChargingOnly,
     chosenFolderIds: chosenFolderIds ?? this.chosenFolderIds,
+    chosenFolderNames: chosenFolderNames ?? this.chosenFolderNames,
   );
 }
 

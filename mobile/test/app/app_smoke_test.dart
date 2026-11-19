@@ -12,6 +12,10 @@ void main() {
       ProviderScope(
         overrides: [
           identityProvider.overrideWith(() => FakeIdentityController(null)),
+          // The pairing screen searches the Wi-Fi on open.
+          serverFinderProvider.overrideWithValue(
+            ({pinnedFingerprintPrefix}) async => const [],
+          ),
         ],
         child: const HaoTranNasApp(),
       ),

@@ -11,7 +11,7 @@ HaoTranNAS server, and lets me browse and download them. Design:
 ```
  lib/
    app/        start, providers (Riverpod)
-   backup/     photo source (photo_manager), background + "Back up now" jobs (workmanager)
+   backup/     photo source (photo_manager), background + "Back up now" jobs (workmanager), restore to gallery
    core/       Wi-Fi multicast lock (Android channel)
    ui/         screens: glue only, never parse bytes
 
@@ -109,7 +109,7 @@ dart:io facts checked on this PC (`test/core/tls_link_test.dart`):
         foreground service (dataSync) + notification "Backing up your photos", budget 5 h,
         cached addresses only; progress ≤ 2/s ─► app; Stop ─► stop_requested ─► job
         (off Android / in tests: runs in the app, budget 15 min)
-      "Verify backup" (in the app, no limit)
+      "Check backup" (in the app, no limit)
 
  runOnce(chosen albums; never chosen = Camera, D-037)
    MediaSource.requestAccess ─► none → stop
@@ -223,8 +223,11 @@ These cannot run in CI or on the dev machine; do them on a real phone.
 | Check | How | Pass when |
 |---|---|---|
 | ⚪ Photo access, all photos | First "Back up now": allow photos and videos, allow location in photos | Status shows files uploaded; `ACCESS_MEDIA_LOCATION` granted in app info |
-| ⚪ Folders | Backup tab → Folders to back up | Albums listed with counts, Camera ticked; Save keeps the choice; only those albums are uploaded |
-| ⚪ Live numbers | "Back up now" on a big library | "n of ~N photos checked" moves within seconds; first upload starts before the scan ends |
+| ⚪ Folders | Backup tab → Folders to back up | Albums listed with counts, Camera ticked; a tick is kept after Back (no Save); only those albums are uploaded |
+| ⚪ Live numbers | "Back up now" on a big library | "n of ~N files done" moves within seconds; first upload starts before the scan ends |
+| ⚪ Restore to gallery (D-042) | Files → this phone → a photo → Restore to phone | "Saved to the gallery, album HaoTranNAS"; Google Photos/Gallery shows it in album HaoTranNAS at its original date; same for a video |
+| ⚪ Restore on Android 9 | Same on an Android 9 phone | Either in the gallery, or the screen says the gallery refused and the file is kept in the app |
+| ⚪ UI look | Backup, Files, Settings tabs in light and dark mode, small screen | Headline readable, nothing cut off; long folder paths end in "…" |
 | ⚪ Notification + Stop | "Back up now", leave the app, come back, tap Stop | Notification "Backing up your photos" while it runs (Android 13+: allow notifications); Stop ends it within a few seconds; notification gone |
 | ⚪ Long backup | "Back up now" with ~1 h of photos, screen off | Keeps going past 10 min (foreground service); next periodic job does not run at the same time |
 | ⚪ Android 14 partial access | Choose "Select photos" in the dialog, pick 2 | Only those 2 are uploaded; access is reported as "only the photos you selected" |
@@ -235,12 +238,12 @@ These cannot run in CI or on the dev machine; do them on a real phone.
 | ⚪ Background job runs | Lock the phone on Wi-Fi with a new photo, wait 15-30 min, don't open the app | Photo is on the server (M4 Done when); `adb shell dumpsys jobscheduler` lists the job |
 | ⚪ Wi-Fi only | Mobile data only, Wi-Fi off, new photo | Background job does not run; it runs once Wi-Fi is back |
 | ⚪ Charging only setting | Turn it on, unplug | Job waits until the phone is charging |
-| ⚪ Backup off | Turn backup off in Settings | `dumpsys jobscheduler` no longer lists `haotrannas-auto-backup` |
+| ⚪ Backup off | Turn "Automatic backup" off on the Backup tab | `dumpsys jobscheduler` no longer lists `haotrannas-auto-backup` |
 | ⚪ 9-minute stop + resume | First backup of many GB in the background | Each run stops before 10 min; next run sends only the missing chunks (server log) |
 | ⚪ No mDNS in the background | Server moved to a new IP, phone locked | Background run fails "server not reachable"; opening the app (mDNS) fixes the address |
 | ⚪ App and job at the same time | Tap "Back up now" while the job runs | "A backup is already running (in the background)" |
 | ⚪ Battery | One day with auto backup on, nothing new to back up | Battery use of the app is noted (each run scans the library and does not connect) |
-| ⚪ Verify backup heals | Damage a chunk on the NAS, run scrub, then "Verify backup" on the phone | Verify shows 1 wrong (repaired); scrub is clean again (M6 Done when) |
+| ⚪ Check backup heals | Damage a chunk on the NAS, run scrub, then "Check backup" on the phone | Last check shows 1 wrong (repaired); scrub is clean again (M6 Done when) |
 | ⚪ mDNS discovery on Wi-Fi | Open pairing on the same Wi-Fi as the server | Server is found (multicast lock held), not only by typed address |
 | ⚪ Pairing on Wi-Fi | Pair with the code from `haotrannas-server pair` | Short id on the phone = the one the server printed; reconnect works |
 | ⚪ SHA-256 speed | Hash a large video on the phone | Speed in MB/s is noted; backup is not blocked by hashing |

@@ -5,7 +5,11 @@
 ///  BrowseScreen (ListDevices) ─► FolderScreen (ListDir, page by page as
 ///  the list scrolls) ─► FolderScreen … ─► FileDetailsScreen
 ///                                         Restore: progress + Cancel
+///                                         photo/video ─► gallery (gallery.dart)
 /// ```
+///
+/// Error texts: a short sentence for the user; the raw reason stays in
+/// smaller text under it (and in the Debug log).
 ///
 /// Everything goes through `RemoteFiles`, so widget tests use a fake.
 /// Author: Hao Tran.
@@ -18,12 +22,14 @@ import 'package:haotrannas_client/protocol/messages.dart';
 import 'package:haotrannas_client/text/formatting.dart';
 
 import '../app/providers.dart';
+import '../backup/gallery.dart' show galleryKindOf;
 
 /// Entries asked for per ListDir page (the spec allows up to 1000; a
 /// smaller page shows the first rows sooner).
 const int folderPageEntries = 200;
 
-/// Lists every paired device; tap one to open its root folder.
+/// Lists every paired device, this phone first; tap one to open its root
+/// folder.
 class BrowseScreen extends ConsumerWidget {
   const BrowseScreen({super.key});
 
@@ -86,11 +92,17 @@ class _DeviceListState extends State<_DeviceList> {
     builder: (context, snapshot) {
       if (snapshot.hasError) {
         return _ProblemText(
-          '${snapshot.error}',
+          'Could not get the list from the NAS.',
+          detail: '${snapshot.error}',
           onRetry: () => setState(() => _devices = widget.files.listDevices()),
         );
       }
-      final devices = snapshot.data;
+      final devices = snapshot.data == null
+          ? null
+          : [
+              ...snapshot.data!.where((device) => device.isCaller),
+              ...snapshot.data!.where((device) => !device.isCaller),
+            ];
       if (devices == null) {
         return const Center(child: CircularProgressIndicator());
       }
@@ -129,9 +141,12 @@ class _DeviceListState extends State<_DeviceList> {
 }
 
 class _ProblemText extends StatelessWidget {
-  const _ProblemText(this.text, {required this.onRetry});
+  const _ProblemText(this.text, {this.detail, required this.onRetry});
 
   final String text;
+
+  /// The raw reason, shown small under [text]; null = none.
+  final String? detail;
   final VoidCallback onRetry;
 
   @override
@@ -142,6 +157,12 @@ class _ProblemText extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(text, textAlign: TextAlign.center),
+          if (detail != null)
+            Text(
+              detail!,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           const SizedBox(height: 8),
           OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
         ],
@@ -179,6 +200,7 @@ class _FolderScreenState extends State<FolderScreen> {
   bool _hasMore = true;
   bool _isLoading = false;
   String? _problem;
+  String? _problemDetail;
 
   @override
   void initState() {
@@ -211,6 +233,9 @@ class _FolderScreenState extends State<FolderScreen> {
         _isLoading = false;
         _problem = failed.kind == BrowseFailureKind.notFound
             ? 'This folder is not on the NAS (any more).'
+            : 'Could not get the list from the NAS.';
+        _problemDetail = failed.kind == BrowseFailureKind.notFound
+            ? null
             : failed.message;
       });
     }
@@ -244,7 +269,11 @@ class _FolderScreenState extends State<FolderScreen> {
   Widget _tailTile() {
     final problem = _problem;
     if (problem != null) {
-      return _ProblemText(problem, onRetry: _loadNextPage);
+      return _ProblemText(
+        problem,
+        detail: _problemDetail,
+        onRetry: _loadNextPage,
+      );
     }
     // Reached the end of what is loaded: ask for the next page.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -263,7 +292,23 @@ class _FolderScreenState extends State<FolderScreen> {
         : widget.path.split('/').last;
     final hasTail = _hasMore || _problem != null;
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title),
+            Text(
+              // Where am I: device, then the folders down to here.
+              [
+                widget.deviceName,
+                ...widget.path.split('/'),
+              ].where((part) => part.isNotEmpty).join(' › '),
+              style: Theme.of(context).textTheme.bodySmall,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
       body: !hasTail && _entries.isEmpty
           ? const Center(
               child: Padding(
@@ -301,7 +346,8 @@ class _FolderScreenState extends State<FolderScreen> {
   }
 }
 
-/// Size, date and version of one file, and Restore with progress.
+/// Size and date of one file, and Restore with progress. A photo or
+/// video goes on into the gallery; other files stay inside the app.
 class FileDetailsScreen extends ConsumerStatefulWidget {
   const FileDetailsScreen({
     super.key,
@@ -325,6 +371,9 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
   DownloadProgress? _progress;
   DownloadResult? _result;
 
+  /// Where a finished restore ended up, for the user.
+  String? _savedText;
+
   bool get _isRestoring => _cancel != null;
 
   @override
@@ -339,6 +388,7 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
       _cancel = cancel;
       _progress = null;
       _result = null;
+      _savedText = null;
     });
     final result = await restoreToPhone(
       files: widget.files,
@@ -347,20 +397,44 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
       remotePath: widget.remotePath,
       versionId: widget.entry.versionId,
       cancel: cancel,
-      addToGallery: ref.read(addToGalleryProvider),
       onProgress: (progress) {
         if (mounted) setState(() => _progress = progress);
       },
     );
+    final savedText = result is DownloadDone
+        ? await _putInGallery(result.outputPath)
+        : null;
     if (!mounted) return;
     setState(() {
       _cancel = null;
       _result = result;
+      _savedText = savedText;
     });
   }
 
+  /// Hands a photo or video to the gallery; says where the file is now.
+  Future<String> _putInGallery(String localPath) async {
+    final entry = widget.entry;
+    final addToGallery = ref.read(addToGalleryProvider);
+    if (addToGallery == null || galleryKindOf(entry.name) == null) {
+      return 'Saved inside this app. Only photos and videos go to the '
+          'gallery.';
+    }
+    try {
+      final place = await addToGallery(
+        localPath,
+        entry.name,
+        DateTime.fromMillisecondsSinceEpoch(entry.modifiedTimeMs),
+      );
+      return 'Saved to the gallery, album "${place.split('/').last}".';
+    } on Object catch (error) {
+      return 'Restored, but the gallery refused it ($error). It is kept '
+          'inside this app.';
+    }
+  }
+
   String _resultText(DownloadResult result) => switch (result) {
-    DownloadDone(:final outputPath) => 'Saved to $outputPath',
+    DownloadDone() => _savedText ?? 'Saved.',
     DownloadCancelled() => 'Cancelled. Nothing was saved.',
     DownloadFailed(:final kind, :final message) => switch (kind) {
       DownloadFailureKind.notFound => 'Not on the NAS any more.',
@@ -386,8 +460,7 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
         children: [
           _DetailRow('Path', widget.remotePath),
           _DetailRow('Size', formatBytes(entry.sizeBytes)),
-          _DetailRow('Changed', formatTimeMs(entry.modifiedTimeMs)),
-          _DetailRow('Version', '${entry.versionId}'),
+          _DetailRow('Date', formatTimeMs(entry.modifiedTimeMs)),
           const SizedBox(height: 16),
           if (_isRestoring) ...[
             LinearProgressIndicator(value: progress?.fraction),

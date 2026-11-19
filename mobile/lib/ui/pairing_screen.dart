@@ -58,6 +58,15 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   bool _isAlarm = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Most users have the NAS on the same Wi-Fi: look for it at once.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _search();
+    });
+  }
+
+  @override
   void dispose() {
     _attempt?.close();
     _addressController.dispose();
@@ -230,11 +239,12 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     final servers = _foundServers;
     return [
       const Text(
-        'On the NAS, run: haotrannas-server pair\n'
-        'It shows a code and a server id.',
+        '1. On the NAS, run: haotrannas-server pair\n'
+        '   It shows a code and a server id.\n'
+        '2. Pick your NAS below.',
       ),
       const SizedBox(height: 16),
-      FilledButton.tonalIcon(
+      FilledButton.icon(
         onPressed: _isSearching ? null : _search,
         icon: _isSearching
             ? const SizedBox.square(
@@ -247,7 +257,10 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       if (servers != null && servers.isEmpty)
         const Padding(
           padding: EdgeInsets.only(top: 8),
-          child: Text('No NAS found. Type its address below.'),
+          child: Text(
+            'No NAS found on this Wi-Fi. Is the phone on the same Wi-Fi '
+            'as the NAS? Or type its address below.',
+          ),
         ),
       if (servers != null)
         for (final server in servers)
@@ -260,6 +273,11 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
             ),
           ),
       const SizedBox(height: 24),
+      Text(
+        'Or type the address',
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
+      const SizedBox(height: 8),
       TextField(
         key: const Key('pairing.address'),
         controller: _addressController,
@@ -272,7 +290,7 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
         onSubmitted: (_) => _connectTyped(),
       ),
       const SizedBox(height: 8),
-      FilledButton(onPressed: _connectTyped, child: const Text('Connect')),
+      OutlinedButton(onPressed: _connectTyped, child: const Text('Connect')),
     ];
   }
 

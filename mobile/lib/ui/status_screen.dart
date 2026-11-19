@@ -1,13 +1,16 @@
-/// Backup tab (first tab of [HomeScreen]): which NAS and is it
-/// reachable, the backup with live numbers and Stop, the chosen folders,
-/// the last backup and check. Connects on open. Author: Hao Tran.
+/// Backup tab (first tab of [HomeScreen]): is everything backed up, is
+/// the NAS reachable, the backup with live numbers and Stop, the
+/// automatic backup switch, the chosen folders, the last check. Connects
+/// on open. Author: Hao Tran.
 ///
 /// ```
-///  ● Connected · server id
-///  Backup: state · n of ~N photos checked · uploaded · MB/s · now <file>
-///          [Back up now | Stop]  [Verify backup]
-///  Folders: Camera, … (2 of 12) ›  ─► FoldersScreen
-///  Last backup · Last check
+///  ✓ Backed up            ← backupHeadline: green / orange / busy
+///    <last run> | live numbers + bar
+///    [Automatic backup  ⏻]  runs by itself · only on Wi-Fi
+///    [Back up now | Stop]  [Check backup]
+///  My NAS ● Connected (short reason when not)
+///  Folders to back up: Camera (default) ›  ─► FoldersScreen
+///  Last check
 /// ```
 library;
 
@@ -41,13 +44,13 @@ class _StatusScreenState extends ConsumerState<StatusScreen> {
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: const [
-        _ServerCard(),
-        SizedBox(height: 12),
         _BackupCard(),
+        SizedBox(height: 12),
+        _ServerCard(),
         SizedBox(height: 12),
         _FoldersCard(),
         SizedBox(height: 12),
-        _HistoryCard(),
+        _LastCheckCard(),
       ],
     ),
   );
@@ -58,36 +61,39 @@ class _ServerCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final identity = ref.watch(identityProvider).value;
     final link = ref.watch(serverConnectionProvider);
     final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     final serverName = link is ServerOnline
         ? link.connection.helloOk.serverName
         : 'My NAS';
     final (stateText, stateColor) = switch (link) {
       ServerOnline() => ('Connected', Colors.green),
       ServerConnecting() => ('Connecting…', colors.tertiary),
-      ServerOffline(:final problem) => (
-        problem == null ? 'Not connected' : 'Not connected: $problem',
-        colors.error,
-      ),
+      ServerOffline() => ('Not connected', colors.error),
     };
+    final problem = link is ServerOffline ? link.problem : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(serverName, style: Theme.of(context).textTheme.titleLarge),
-            if (identity != null) Text('Server id ${identity.serverShortId}'),
-            const SizedBox(height: 8),
             Row(
               children: [
+                const Icon(Icons.dns),
+                const SizedBox(width: 12),
+                Expanded(child: Text(serverName, style: textTheme.titleMedium)),
                 Icon(Icons.circle, size: 12, color: stateColor),
                 const SizedBox(width: 8),
-                Expanded(child: Text(stateText)),
+                Text(stateText),
               ],
             ),
+            if (problem != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(problem, style: textTheme.bodySmall),
+              ),
             if (link is ServerOffline && link.isMaybeNotPaired)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
@@ -112,6 +118,15 @@ class _ServerCard extends ConsumerWidget {
   }
 }
 
+/// "Runs by itself · only on Wi-Fi · only while charging" for the switch.
+String _autoBackupText(BackupSettings settings) => settings.isBackupOn
+    ? [
+        'Runs by itself',
+        if (settings.isWifiOnly) 'only on Wi-Fi',
+        if (settings.isChargingOnly) 'only while charging',
+      ].join(' · ')
+    : 'Off: only "Back up now" backs up';
+
 class _BackupCard extends ConsumerWidget {
   const _BackupCard();
 
@@ -124,25 +139,33 @@ class _BackupCard extends ConsumerWidget {
         final activity = source.activity;
         final isBusy = activity != BackupActivity.idle;
         final progress = source.progress;
+        final lastRun = source.lastRun;
+        final settings = source.settings;
+        final headline = backupHeadline(activity, lastRun);
+        final colors = Theme.of(context).colorScheme;
         final textTheme = Theme.of(context).textTheme;
+        final (headlineIcon, headlineColor) = switch (headline.health) {
+          BackupHealth.good => (Icons.check_circle, Colors.green),
+          BackupHealth.warning => (Icons.warning_amber, Colors.orange),
+          BackupHealth.busy => (Icons.sync, colors.primary),
+        };
         return Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Backup', style: textTheme.titleLarge),
+                Row(
+                  children: [
+                    Icon(headlineIcon, color: headlineColor, size: 32),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(headline.text, style: textTheme.titleLarge),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 8),
-                Text(switch (activity) {
-                  BackupActivity.idle =>
-                    source.settings.isBackupOn
-                        ? 'Automatic backup is on'
-                        : 'Automatic backup is off',
-                  BackupActivity.backingUp => 'Backing up…',
-                  BackupActivity.verifying => 'Checking the backup…',
-                }, style: textTheme.titleMedium),
                 if (isBusy) ...[
-                  const SizedBox(height: 8),
                   LinearProgressIndicator(value: progress?.fraction),
                   const SizedBox(height: 8),
                   for (final line in liveProgressLines(
@@ -151,8 +174,22 @@ class _BackupCard extends ConsumerWidget {
                     DateTime.now(),
                   ))
                     Text(line, maxLines: 1, overflow: TextOverflow.ellipsis),
-                ],
-                const SizedBox(height: 12),
+                ] else
+                  Text(
+                    lastRun == null
+                        ? 'Tap "Back up now" to start.'
+                        : runSummaryText(lastRun),
+                  ),
+                SwitchListTile(
+                  key: const Key('backup.autoOn'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Automatic backup'),
+                  subtitle: Text(_autoBackupText(settings)),
+                  value: settings.isBackupOn,
+                  onChanged: (isOn) => source.updateSettings(
+                    settings.copyWith(isBackupOn: isOn),
+                  ),
+                ),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -172,7 +209,7 @@ class _BackupCard extends ConsumerWidget {
                     OutlinedButton.icon(
                       onPressed: isBusy ? null : source.verifyAll,
                       icon: const Icon(Icons.fact_check),
-                      label: const Text('Verify backup'),
+                      label: const Text('Check backup'),
                     ),
                   ],
                 ),
@@ -195,14 +232,22 @@ class _FoldersCard extends ConsumerWidget {
       listenable: source,
       builder: (context, _) {
         final chosen = source.settings.chosenFolderIds;
+        final names = source.settings.chosenFolderNames;
         return Card(
           child: ListTile(
             leading: const Icon(Icons.photo_library),
             title: const Text('Folders to back up'),
             subtitle: Text(
-              chosen == null
-                  ? 'Camera (not chosen yet): tap to choose'
-                  : '${chosen.length} chosen',
+              switch (chosen?.length) {
+                null => 'Camera (default): tap to choose more',
+                0 => 'None chosen: nothing is backed up',
+                // Names saved with the choice; a count for older settings.
+                _ when names != null && names.isNotEmpty => names.join(', '),
+                1 => '1 folder',
+                final count => '$count folders',
+              },
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).push(
@@ -215,8 +260,9 @@ class _FoldersCard extends ConsumerWidget {
   }
 }
 
-class _HistoryCard extends ConsumerWidget {
-  const _HistoryCard();
+/// The last "Check backup" result.
+class _LastCheckCard extends ConsumerWidget {
+  const _LastCheckCard();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -224,23 +270,16 @@ class _HistoryCard extends ConsumerWidget {
     return ListenableBuilder(
       listenable: source,
       builder: (context, _) {
-        final lastRun = source.lastRun;
         final lastVerify = source.lastVerify;
-        final textTheme = Theme.of(context).textTheme;
         return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Last backup', style: textTheme.labelLarge),
-                Text(lastRun == null ? 'Never' : runSummaryText(lastRun)),
-                const SizedBox(height: 8),
-                Text('Last check', style: textTheme.labelLarge),
-                Text(
-                  lastVerify == null ? 'Never' : verifySummaryText(lastVerify),
-                ),
-              ],
+          child: ListTile(
+            leading: const Icon(Icons.fact_check),
+            title: const Text('Last check'),
+            subtitle: Text(
+              lastVerify == null
+                  ? 'Never. "Check backup" makes sure every file on the NAS '
+                        'is whole.'
+                  : verifySummaryText(lastVerify),
             ),
           ),
         );

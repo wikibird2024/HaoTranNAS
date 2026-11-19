@@ -443,15 +443,12 @@ void main() {
       final content = Uint8List.fromList('photo'.codeUnits);
       fakeServer.addFile('DCIM/IMG_1.jpg', content);
       final restoreFolder = Directory(outputPath('restored'));
-      final galleryCalls = <String>[];
 
       Future<DownloadResult> restore() => restoreToPhone(
         files: engine,
         restoreFolder: restoreFolder,
         deviceId: 1,
         remotePath: 'DCIM/IMG_1.jpg',
-        addToGallery: (localPath, remotePath) async =>
-            galleryCalls.add(localPath),
       );
 
       final first = await restore();
@@ -465,7 +462,6 @@ void main() {
         endsWith('/device-1/DCIM/IMG_1 (2).jpg'),
       );
       expect(File(second.outputPath).readAsBytesSync(), content);
-      expect(galleryCalls, [first.outputPath, second.outputPath]);
     });
   });
 }

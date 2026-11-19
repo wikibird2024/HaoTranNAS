@@ -79,6 +79,7 @@ String encodeSettings(BackupSettings settings) => jsonEncode({
   'charging_only': settings.isChargingOnly,
   if (settings.chosenFolderIds case final folderIds?)
     'folder_ids': folderIds.toList()..sort(),
+  'folder_names': ?settings.chosenFolderNames,
 });
 
 /// Defaults for anything missing or unreadable.
@@ -92,12 +93,17 @@ BackupSettings decodeSettings(String? text) {
   }
 
   final folderIds = json['folder_ids'];
+  final folderNames = json['folder_names'];
   return BackupSettings(
     isBackupOn: readFlag('backup_on', defaults.isBackupOn),
     isWifiOnly: readFlag('wifi_only', defaults.isWifiOnly),
     isChargingOnly: readFlag('charging_only', defaults.isChargingOnly),
     chosenFolderIds: folderIds is List && folderIds.every((id) => id is String)
         ? {...folderIds.cast<String>()}
+        : null,
+    chosenFolderNames:
+        folderNames is List && folderNames.every((name) => name is String)
+        ? folderNames.cast<String>()
         : null,
   );
 }
@@ -154,6 +160,7 @@ String encodeRunSummary(BackupRunSummary summary) => jsonEncode({
   'files_already_backed_up': summary.filesAlreadyBackedUp,
   'files_failed': summary.filesFailed,
   'bytes_uploaded': summary.bytesUploaded,
+  'files_left': summary.filesLeft,
   'problem': summary.problem,
 });
 
@@ -169,6 +176,8 @@ BackupRunSummary? decodeRunSummary(String? text) {
       filesAlreadyBackedUp: json['files_already_backed_up']! as int,
       filesFailed: json['files_failed']! as int,
       bytesUploaded: json['bytes_uploaded']! as int,
+      // Missing in summaries saved before D-042.
+      filesLeft: json['files_left'] as int? ?? 0,
       problem: json['problem'] as String?,
     );
   } on TypeError {
@@ -219,6 +228,7 @@ BackupRunSummary summaryOfRun(BackupRunReport report) {
     filesAlreadyBackedUp: report.filesAlreadyBackedUp,
     filesFailed: report.filesFailed,
     bytesUploaded: report.bytesUploaded,
+    filesLeft: report.itemsLeft,
     problem:
         report.problem ??
         (firstFailure == null
