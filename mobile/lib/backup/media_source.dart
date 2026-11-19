@@ -4,8 +4,10 @@
 ///
 /// ```
 ///  requestAccess ─► all / selectedOnly (Android 14 "selected photos") / none
-///  listItems ─────► whole library in pages of 200 (one query, no album
-///                   duplicates) ─► MediaItem(id, remote path, size, mtime)
+///  listFolders ───► albums (Camera, Screenshots, WhatsApp Images…) + counts
+///  listItems ─────► the chosen folders, Camera first, each newest first,
+///                   in pages of 200; a photo in two albums comes once
+///                   ─► MediaItem(id, remote path, size, mtime)
 ///  originalFile ──► the original bytes (setRequireOriginal: EXIF GPS kept
 ///                   when ACCESS_MEDIA_LOCATION is granted)
 /// ```
@@ -82,13 +84,54 @@ final class MediaAccess {
   };
 }
 
+/// One album (Android bucket) of photos and videos.
+final class MediaFolder {
+  const MediaFolder({
+    required this.id,
+    required this.name,
+    required this.itemCount,
+  });
+
+  final String id;
+
+  /// What the gallery shows, e.g. `Camera`, `Screenshots`.
+  final String name;
+  final int itemCount;
+
+  @override
+  String toString() => 'MediaFolder($id, $name, $itemCount)';
+}
+
+/// The folder backed up when the user never chose (D-037).
+const defaultFolderName = 'Camera';
+
+/// Ids of the folders named [defaultFolderName] (any case).
+Set<String> defaultFolderIds(List<MediaFolder> folders) => {
+  for (final folder in folders)
+    if (folder.name.toLowerCase() == defaultFolderName.toLowerCase()) folder.id,
+};
+
+/// [folders] in backup order: Camera first (new photos land there), then
+/// by name.
+List<MediaFolder> inBackupOrder(Iterable<MediaFolder> folders) {
+  bool isCamera(MediaFolder folder) =>
+      folder.name.toLowerCase() == defaultFolderName.toLowerCase();
+  return folders.toList()..sort((first, second) {
+    if (isCamera(first) != isCamera(second)) return isCamera(first) ? -1 : 1;
+    return first.name.toLowerCase().compareTo(second.name.toLowerCase());
+  });
+}
+
 abstract interface class MediaSource {
   /// Asks for photo and video access (shows the system dialog once).
   Future<MediaAccess> requestAccess();
 
-  /// Every photo and video; with [changedSince], only those modified at
-  /// or after it.
-  Stream<MediaItem> listItems({DateTime? changedSince});
+  /// Every album with photos or videos, with its count.
+  Future<List<MediaFolder>> listFolders();
+
+  /// The photos and videos of [folderIds] (every folder when null):
+  /// Camera first, each folder newest first, each item once.
+  Stream<MediaItem> listItems({Set<String>? folderIds});
 
   /// The original file for [item], or null when it is gone or not on
   /// the phone (for example only in a cloud).
@@ -234,28 +277,51 @@ class PhotoManagerMediaSource implements MediaSource {
     });
   }
 
+  /// Newest first. A photo taken during the scan shifts the pages by
+  /// one, so an item can come twice; the `seenIds` check drops it.
+  static final _newestFirst = FilterOptionGroup(
+    orders: const [OrderOption(type: OrderOptionType.createDate, asc: false)],
+  );
+
+  Future<List<AssetPathEntity>> _albums() => PhotoManager.getAssetPathList(
+    hasAll: false,
+    type: RequestType.common,
+    filterOption: _newestFirst,
+  );
+
   @override
-  Stream<MediaItem> listItems({DateTime? changedSince}) async* {
-    final filter = FilterOptionGroup(
-      // Newest creation dates last, so a photo taken during the scan
-      // lands on a later page instead of shifting earlier ones.
-      orders: const [OrderOption(type: OrderOptionType.createDate, asc: true)],
-      updateTimeCond: changedSince == null
-          ? null
-          : DateTimeCond(min: changedSince, max: DateTime(9999)),
-    );
-    for (var page = 0; ; page++) {
-      final assets = await PhotoManager.getAssetListPaged(
-        page: page,
-        pageCount: pageSize,
-        type: RequestType.common,
-        filterOption: filter,
-      );
-      for (final asset in assets) {
-        final item = await _itemFor(asset);
-        if (item != null) yield item;
+  Future<List<MediaFolder>> listFolders() async => [
+    for (final album in await _albums())
+      MediaFolder(
+        id: album.id,
+        name: album.name,
+        itemCount: await album.assetCountAsync,
+      ),
+  ];
+
+  @override
+  Stream<MediaItem> listItems({Set<String>? folderIds}) async* {
+    final albums = {for (final album in await _albums()) album.id: album};
+    final folders = inBackupOrder([
+      for (final album in albums.values)
+        if (folderIds == null || folderIds.contains(album.id))
+          MediaFolder(id: album.id, name: album.name, itemCount: 0),
+    ]);
+    final seenIds = <String>{};
+    for (final folder in folders) {
+      final album = albums[folder.id]!;
+      for (var page = 0; ; page++) {
+        final assets = await album.getAssetListPaged(
+          page: page,
+          size: pageSize,
+        );
+        for (final asset in assets) {
+          if (!seenIds.add(asset.id)) continue;
+          final item = await _itemFor(asset);
+          if (item != null) yield item;
+        }
+        if (assets.length < pageSize) break;
       }
-      if (assets.length < pageSize) return;
     }
   }
 

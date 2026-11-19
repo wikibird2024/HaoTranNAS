@@ -31,7 +31,7 @@ class BrowseScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final files = ref.watch(remoteFilesProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Backups')),
+      appBar: AppBar(title: const Text('Files on the NAS')),
       body: files == null
           ? _NotConnected(
               onConnect: () =>
@@ -95,7 +95,9 @@ class _DeviceListState extends State<_DeviceList> {
         return const Center(child: CircularProgressIndicator());
       }
       if (devices.isEmpty) {
-        return const Center(child: Text('No devices on the NAS.'));
+        return const Center(
+          child: Text('Nothing on the NAS yet: back up first.'),
+        );
       }
       return ListView(
         children: [
@@ -108,6 +110,7 @@ class _DeviceListState extends State<_DeviceList> {
                 device.isCaller ? '${device.name} (this phone)' : device.name,
               ),
               subtitle: Text('Paired ${formatTimeMs(device.pairedAtMs)}'),
+              trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => FolderScreen(
@@ -262,7 +265,16 @@ class _FolderScreenState extends State<FolderScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(title)),
       body: !hasTail && _entries.isEmpty
-          ? const Center(child: Text('Nothing backed up here yet.'))
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'Nothing backed up here yet.\n'
+                  'Go to the Backup tab and tap "Back up now".',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
           : ListView.builder(
               itemCount: _entries.length + (hasTail ? 1 : 0),
               itemBuilder: (context, index) {

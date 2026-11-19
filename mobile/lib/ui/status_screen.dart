@@ -1,6 +1,14 @@
-/// Home screen when paired: which NAS, is it reachable, how did the last
-/// backup go, "Back up now" and "Verify backup", and the way to Browse,
-/// Settings and the Debug log. Connects on open. Author: Hao Tran.
+/// Backup tab (first tab of [HomeScreen]): which NAS and is it
+/// reachable, the backup with live numbers and Stop, the chosen folders,
+/// the last backup and check. Connects on open. Author: Hao Tran.
+///
+/// ```
+///  ● Connected · server id
+///  Backup: state · n of ~N photos checked · uploaded · MB/s · now <file>
+///          [Back up now | Stop]  [Verify backup]
+///  Folders: Camera, … (2 of 12) ›  ─► FoldersScreen
+///  Last backup · Last check
+/// ```
 library;
 
 import 'package:flutter/material.dart';
@@ -8,10 +16,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers.dart';
 import 'backup_status_source.dart';
-import 'browse_screen.dart';
-import 'debug_log_screen.dart';
+import 'folders_screen.dart';
 import 'formatting.dart';
-import 'settings_screen.dart';
 
 class StatusScreen extends ConsumerStatefulWidget {
   const StatusScreen({super.key});
@@ -29,41 +35,19 @@ class _StatusScreenState extends ConsumerState<StatusScreen> {
     });
   }
 
-  void _open(Widget screen) =>
-      Navigator.of(context)
-          .push(MaterialPageRoute<void>(builder: (_) => screen));
-
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('HaoTranNAS')),
     body: ListView(
       padding: const EdgeInsets.all(16),
-      children: [
-        const _ServerCard(),
-        const SizedBox(height: 12),
-        const _BackupCard(),
-        const SizedBox(height: 12),
-        Card(
-          child: Column(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.folder_open),
-                title: const Text('Browse backups'),
-                onTap: () => _open(const BrowseScreen()),
-              ),
-              ListTile(
-                leading: const Icon(Icons.settings),
-                title: const Text('Settings'),
-                onTap: () => _open(const SettingsScreen()),
-              ),
-              ListTile(
-                leading: const Icon(Icons.receipt_long),
-                title: const Text('Debug log'),
-                onTap: () => _open(const DebugLogScreen()),
-              ),
-            ],
-          ),
-        ),
+      children: const [
+        _ServerCard(),
+        SizedBox(height: 12),
+        _BackupCard(),
+        SizedBox(height: 12),
+        _FoldersCard(),
+        SizedBox(height: 12),
+        _HistoryCard(),
       ],
     ),
   );
@@ -148,6 +132,28 @@ String _verifySummaryText(VerifySummary verify) {
       '${problem == null ? '' : '\n$problem'}';
 }
 
+/// The lines under the progress bar while a run goes on.
+List<String> liveProgressLines(
+  BackupActivity activity,
+  BackupLiveProgress? progress,
+  DateTime now,
+) {
+  if (progress == null) return const ['Getting ready…'];
+  final checkedText = activity == BackupActivity.verifying
+      ? '${formatCount(progress.itemsChecked)} of '
+            '${formatCount(progress.itemsTotal)} files checked'
+      : '${formatCount(progress.itemsChecked)} of '
+            '~${formatCount(progress.itemsTotal)} photos checked';
+  final speed = progress.bytesPerSecond(now);
+  return [
+    checkedText,
+    '${formatCount(progress.filesUploaded)} uploaded · '
+        '${formatBytes(progress.bytesUploaded)}'
+        '${speed > 0 ? ' · ${formatBytes(speed.round())}/s' : ''}',
+    if (progress.currentPath.isNotEmpty) 'Now: ${progress.currentPath}',
+  ];
+}
+
 class _BackupCard extends ConsumerWidget {
   const _BackupCard();
 
@@ -157,9 +163,9 @@ class _BackupCard extends ConsumerWidget {
     return ListenableBuilder(
       listenable: source,
       builder: (context, _) {
-        final lastRun = source.lastRun;
-        final lastVerify = source.lastVerify;
-        final isBusy = source.activity != BackupActivity.idle;
+        final activity = source.activity;
+        final isBusy = activity != BackupActivity.idle;
+        final progress = source.progress;
         final textTheme = Theme.of(context).textTheme;
         return Card(
           child: Padding(
@@ -169,39 +175,112 @@ class _BackupCard extends ConsumerWidget {
               children: [
                 Text('Backup', style: textTheme.titleLarge),
                 const SizedBox(height: 8),
-                Text(switch (source.activity) {
+                Text(switch (activity) {
                   BackupActivity.idle =>
                     source.settings.isBackupOn
                         ? 'Automatic backup is on'
                         : 'Automatic backup is off',
                   BackupActivity.backingUp => 'Backing up…',
                   BackupActivity.verifying => 'Checking the backup…',
-                }),
-                if (isBusy) const LinearProgressIndicator(),
-                const SizedBox(height: 8),
-                Text('Last backup', style: textTheme.labelLarge),
-                Text(lastRun == null ? 'Never' : _runSummaryText(lastRun)),
-                if (lastVerify != null) ...[
+                }, style: textTheme.titleMedium),
+                if (isBusy) ...[
                   const SizedBox(height: 8),
-                  Text('Last check', style: textTheme.labelLarge),
-                  Text(_verifySummaryText(lastVerify)),
+                  LinearProgressIndicator(value: progress?.fraction),
+                  const SizedBox(height: 8),
+                  for (final line in liveProgressLines(
+                    activity,
+                    progress,
+                    DateTime.now(),
+                  ))
+                    Text(line, maxLines: 1, overflow: TextOverflow.ellipsis),
                 ],
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    FilledButton.icon(
-                      onPressed: isBusy ? null : source.runNow,
-                      icon: const Icon(Icons.backup),
-                      label: const Text('Back up now'),
-                    ),
+                    if (isBusy)
+                      FilledButton.tonalIcon(
+                        onPressed: source.stop,
+                        icon: const Icon(Icons.stop),
+                        label: const Text('Stop'),
+                      )
+                    else
+                      FilledButton.icon(
+                        onPressed: source.runNow,
+                        icon: const Icon(Icons.backup),
+                        label: const Text('Back up now'),
+                      ),
                     OutlinedButton.icon(
                       onPressed: isBusy ? null : source.verifyAll,
                       icon: const Icon(Icons.fact_check),
                       label: const Text('Verify backup'),
                     ),
                   ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _FoldersCard extends ConsumerWidget {
+  const _FoldersCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final source = ref.watch(backupStatusSourceProvider);
+    return ListenableBuilder(
+      listenable: source,
+      builder: (context, _) {
+        final chosen = source.settings.chosenFolderIds;
+        return Card(
+          child: ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Folders to back up'),
+            subtitle: Text(
+              chosen == null
+                  ? 'Camera (not chosen yet): tap to choose'
+                  : '${chosen.length} chosen',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const FoldersScreen()),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _HistoryCard extends ConsumerWidget {
+  const _HistoryCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final source = ref.watch(backupStatusSourceProvider);
+    return ListenableBuilder(
+      listenable: source,
+      builder: (context, _) {
+        final lastRun = source.lastRun;
+        final lastVerify = source.lastVerify;
+        final textTheme = Theme.of(context).textTheme;
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Last backup', style: textTheme.labelLarge),
+                Text(lastRun == null ? 'Never' : _runSummaryText(lastRun)),
+                const SizedBox(height: 8),
+                Text('Last check', style: textTheme.labelLarge),
+                Text(
+                  lastVerify == null ? 'Never' : _verifySummaryText(lastVerify),
                 ),
               ],
             ),

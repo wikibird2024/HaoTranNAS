@@ -2,11 +2,16 @@
 /// and the adapter the screens see ([BackupControllerStatusSource]).
 ///
 /// ```
-///  Status/Settings ─► BackupControllerStatusSource ─► BackupController
-///                       (BackupStatusSource)            │ runNow / verifyAll ─► BackupRunner
-///                                                       │ updateSettings ─► store + BackupScheduler
-///                                                       ▼
-///                            SqfliteBackupStateStore: settings, last_run, last_verify, run_lock
+///  Screens ─► BackupControllerStatusSource ─► BackupController
+///              (BackupStatusSource)            │ runNow ─► ManualBackupLauncher (Android:
+///                                              │           long-running job, D-038)
+///                                              │           └─ no launcher: BackupRunner here
+///                                              │ worker progress ─► onWorkerProgress ─► progress
+///                                              │ stop ─► stop_requested value + cancel
+///                                              │ verifyAll ─► BackupRunner (here)
+///                                              │ updateSettings ─► store + BackupScheduler
+///                                              ▼
+///          SqfliteBackupStateStore: settings, last_run, last_verify, run_lock, stop_requested
 /// ```
 ///
 /// Settings and summaries live in the same SQLite file as the item
@@ -27,11 +32,17 @@ import '../client/upload_engine.dart';
 import '../ui/backup_status_source.dart';
 import 'backup_runner.dart';
 import 'backup_state_store.dart';
+import 'media_source.dart';
 
 /// Names in the store's `app_values` table.
 const settingsValueName = 'settings';
 const lastRunValueName = 'last_run';
 const lastVerifyValueName = 'last_verify';
+
+/// `yes` asks the running long backup job to stop (the app and the job
+/// run in different isolates; this shared value is how they talk).
+const stopRequestedValueName = 'stop_requested';
+const stopRequestedYes = 'yes';
 
 /// A foreground run stops after this; shorter than [runLockStaleAfterMs]
 /// so the lock never goes stale while a run is alive.
@@ -45,12 +56,29 @@ abstract interface class BackupScheduler {
   Future<void> apply(BackupSettings settings);
 }
 
+/// Runs "Back up now" as a long-running job outside the app's isolate,
+/// with a notification (D-038). Null in tests and off Android: the run
+/// then happens in the controller.
+abstract interface class ManualBackupLauncher {
+  /// Queues the job (asks for the notification permission first).
+  Future<void> start();
+
+  /// True while the job is queued or running.
+  Future<bool> isRunning();
+
+  /// Calls [onProgress] with each progress map the job reports
+  /// ([encodeWorkerProgress]).
+  void listen(void Function(Map<String, Object?> progress) onProgress);
+}
+
 // ── Saved forms (JSON in app_values) ──────────────────────────────────
 
 String encodeSettings(BackupSettings settings) => jsonEncode({
   'backup_on': settings.isBackupOn,
   'wifi_only': settings.isWifiOnly,
   'charging_only': settings.isChargingOnly,
+  if (settings.chosenFolderIds case final folderIds?)
+    'folder_ids': folderIds.toList()..sort(),
 });
 
 /// Defaults for anything missing or unreadable.
@@ -63,10 +91,60 @@ BackupSettings decodeSettings(String? text) {
     return value is bool ? value : fallback;
   }
 
+  final folderIds = json['folder_ids'];
   return BackupSettings(
     isBackupOn: readFlag('backup_on', defaults.isBackupOn),
     isWifiOnly: readFlag('wifi_only', defaults.isWifiOnly),
     isChargingOnly: readFlag('charging_only', defaults.isChargingOnly),
+    chosenFolderIds: folderIds is List && folderIds.every((id) => id is String)
+        ? {...folderIds.cast<String>()}
+        : null,
+  );
+}
+
+/// What the long backup job reports to the app (workmanager progress
+/// data: ints and strings only).
+Map<String, Object?> encodeWorkerProgress({
+  required bool isDone,
+  required DateTime startedAt,
+  BackupProgress? progress,
+  String? problem,
+}) => {
+  'state': isDone ? 'done' : 'running',
+  'started_at_ms': startedAt.millisecondsSinceEpoch,
+  'checked': progress?.itemsDone ?? 0,
+  'total': progress?.itemsTotal ?? 0,
+  'uploaded': progress?.filesUploaded ?? 0,
+  'bytes': progress?.bytesUploaded ?? 0,
+  'path': progress?.currentPath ?? '',
+  'problem': ?problem,
+};
+
+/// The job's report: done (with an optional problem), or the live
+/// numbers. Null for a map this app did not write.
+({bool isDone, BackupLiveProgress? progress, String? problem})?
+decodeWorkerProgress(Map<String, Object?> map) {
+  final state = map['state'];
+  if (state != 'running' && state != 'done') return null;
+  int number(String name) => switch (map[name]) {
+    final int value => value,
+    _ => 0,
+  };
+  final problem = map['problem'];
+  return (
+    isDone: state == 'done',
+    problem: problem is String ? problem : null,
+    progress: BackupLiveProgress(
+      startedAt: DateTime.fromMillisecondsSinceEpoch(number('started_at_ms')),
+      itemsChecked: number('checked'),
+      itemsTotal: number('total'),
+      filesUploaded: number('uploaded'),
+      bytesUploaded: number('bytes'),
+      currentPath: switch (map['path']) {
+        final String path => path,
+        _ => '',
+      },
+    ),
   );
 }
 
@@ -169,15 +247,22 @@ class BackupController extends ChangeNotifier {
     required this.runner,
     required this.stateStore,
     required this.scheduler,
+    this.manualLauncher,
     this.runBudget = foregroundRunBudget,
     this.log,
+    DateTime Function()? clock,
     String? lockOwner,
-  }) : lockOwner = lockOwner ?? 'app-${DateTime.now().microsecondsSinceEpoch}';
+  }) : clock = clock ?? DateTime.now,
+       lockOwner = lockOwner ?? 'app-${DateTime.now().microsecondsSinceEpoch}';
 
   final BackupRunner runner;
   final BackupStateStore stateStore;
   final BackupScheduler scheduler;
+
+  /// Null: "Back up now" runs here (tests, desktop).
+  final ManualBackupLauncher? manualLauncher;
   final Duration runBudget;
+  final DateTime Function() clock;
 
   /// Where a scheduling failure is noted (the session log); null = lost.
   final void Function(String note)? log;
@@ -192,7 +277,13 @@ class BackupController extends ChangeNotifier {
   BackupRunSummary? _lastRunSummary;
   VerifySummary? _lastVerifySummary;
   UploadCancel? _cancel;
+  BackupLiveProgress? _progress;
+  DateTime? _lastProgressNotifyAt;
   bool _isDisposed = false;
+
+  /// Screen updates for live numbers are at most this often (a scan can
+  /// look at thousands of photos a second).
+  static const progressNotifyInterval = Duration(milliseconds: 250);
 
   /// A run may finish after the app dropped the controller: stay quiet.
   void _notify() {
@@ -208,6 +299,7 @@ class BackupController extends ChangeNotifier {
 
   BackupActivity get activity => _activity;
   BackupSettings get settings => _settings;
+  BackupLiveProgress? get progress => _progress;
 
   /// The last foreground run of this app session; null before one.
   BackupRunReport? get lastReport => _lastReport;
@@ -227,6 +319,17 @@ class BackupController extends ChangeNotifier {
     _lastVerifySummary = decodeVerifySummary(
       await stateStore.readValue(lastVerifyValueName),
     );
+    final launcher = manualLauncher;
+    if (launcher != null) {
+      launcher.listen(onWorkerProgress);
+      try {
+        if (await launcher.isRunning() && _activity == BackupActivity.idle) {
+          _activity = BackupActivity.backingUp;
+        }
+      } on Exception catch (error) {
+        log?.call('backup job state unknown: $error');
+      }
+    }
     _notify();
     await _applySchedule();
   }
@@ -240,8 +343,84 @@ class BackupController extends ChangeNotifier {
     }
   }
 
-  /// Stops a running backup or verify after the current chunk.
-  void stop() => _cancel?.cancel();
+  /// Stops a running backup or verify after the current chunk: here, and
+  /// in the long backup job through the shared store.
+  Future<void> stop() async {
+    _cancel?.cancel();
+    final launcher = manualLauncher;
+    if (launcher == null || _activity != BackupActivity.backingUp) return;
+    await stateStore.writeValue(stopRequestedValueName, stopRequestedYes);
+    // Android may have killed the job before its "done" report: then
+    // nothing else would ever end "Backing up…".
+    if (_cancel == null && !await launcher.isRunning()) {
+      _activity = BackupActivity.idle;
+      _progress = null;
+      _notify();
+    }
+  }
+
+  /// A progress map from the long backup job.
+  Future<void> onWorkerProgress(Map<String, Object?> map) async {
+    final report = decodeWorkerProgress(map);
+    if (report == null) return;
+    if (!report.isDone) {
+      _activity = BackupActivity.backingUp;
+      _progress = report.progress;
+      _notify();
+      return;
+    }
+    _activity = BackupActivity.idle;
+    _progress = null;
+    final saved = decodeRunSummary(
+      await stateStore.readValue(lastRunValueName),
+    );
+    final problem = report.problem;
+    _lastRunSummary = problem == null
+        ? saved
+        : BackupRunSummary(
+            finishedAt: clock(),
+            filesUploaded: 0,
+            filesAlreadyBackedUp: 0,
+            filesFailed: 0,
+            bytesUploaded: 0,
+            problem: problem,
+          );
+    _notify();
+  }
+
+  /// The phone's albums, Camera first, with the current choice.
+  Future<List<BackupFolderChoice>> loadFolders() async {
+    final access = await runner.mediaSource.requestAccess();
+    if (!access.canRead) return const [];
+    final folders = inBackupOrder(await runner.mediaSource.listFolders());
+    final chosenIds = _settings.chosenFolderIds ?? defaultFolderIds(folders);
+    return [
+      for (final folder in folders)
+        BackupFolderChoice(
+          id: folder.id,
+          name: folder.name,
+          itemCount: folder.itemCount,
+          isChosen: chosenIds.contains(folder.id),
+        ),
+    ];
+  }
+
+  void _onRunProgress(BackupProgress progress, DateTime startedAt) {
+    _progress = BackupLiveProgress(
+      startedAt: startedAt,
+      itemsChecked: progress.itemsDone,
+      itemsTotal: progress.itemsTotal,
+      filesUploaded: progress.filesUploaded,
+      bytesUploaded: progress.bytesUploaded,
+      currentPath: progress.currentPath,
+    );
+    final now = clock();
+    final last = _lastProgressNotifyAt;
+    if (last == null || now.difference(last) >= progressNotifyInterval) {
+      _lastProgressNotifyAt = now;
+      _notify();
+    }
+  }
 
   Future<void> updateSettings(BackupSettings settings) async {
     _settings = settings;
@@ -253,17 +432,29 @@ class BackupController extends ChangeNotifier {
   /// Runs a backup now. Null when something is already running (here or
   /// in the background job); the summary then says so.
   Future<BackupRunReport?> runNow() async {
+    void refused(String problem) => _lastRunSummary = BackupRunSummary(
+      finishedAt: clock(),
+      filesUploaded: 0,
+      filesAlreadyBackedUp: 0,
+      filesFailed: 0,
+      bytesUploaded: 0,
+      problem: problem,
+    );
+    final launcher = manualLauncher;
+    if (launcher != null) {
+      await _launch(launcher, onRefused: refused);
+      return null;
+    }
+    final startedAt = clock();
     final report = await _exclusive(
       BackupActivity.backingUp,
-      (cancel) => runner.runOnce(budget: runBudget, cancel: cancel),
-      onRefused: (problem) => _lastRunSummary = BackupRunSummary(
-        finishedAt: DateTime.now(),
-        filesUploaded: 0,
-        filesAlreadyBackedUp: 0,
-        filesFailed: 0,
-        bytesUploaded: 0,
-        problem: problem,
+      (cancel) => runner.runOnce(
+        folderIds: _settings.chosenFolderIds,
+        budget: runBudget,
+        cancel: cancel,
+        onProgress: (progress) => _onRunProgress(progress, startedAt),
       ),
+      onRefused: refused,
     );
     if (report != null) {
       _lastReport = report;
@@ -280,9 +471,13 @@ class BackupController extends ChangeNotifier {
   /// "Verify backup" (M6): offers every backed-up file again. Null when
   /// something is already running.
   Future<VerifyReport?> verifyAll() async {
+    final startedAt = clock();
     final report = await _exclusive(
       BackupActivity.verifying,
-      (cancel) => runner.verifyAll(cancel: cancel),
+      (cancel) => runner.verifyAll(
+        cancel: cancel,
+        onProgress: (progress) => _onRunProgress(progress, startedAt),
+      ),
       onRefused: (problem) => _lastVerifySummary = VerifySummary(
         finishedAt: DateTime.now(),
         filesChecked: 0,
@@ -303,6 +498,30 @@ class BackupController extends ChangeNotifier {
   }
 
   static const busyText = 'A backup is already running.';
+
+  /// Queues the long backup job; the screens follow it through
+  /// [onWorkerProgress].
+  Future<void> _launch(
+    ManualBackupLauncher launcher, {
+    required void Function(String problem) onRefused,
+  }) async {
+    if (_activity != BackupActivity.idle) {
+      onRefused(busyText);
+      _notify();
+      return;
+    }
+    _activity = BackupActivity.backingUp;
+    _progress = null;
+    _notify();
+    try {
+      await stateStore.writeValue(stopRequestedValueName, 'no');
+      await launcher.start();
+    } on Exception catch (error) {
+      _activity = BackupActivity.idle;
+      onRefused('Could not start the backup: $error');
+    }
+    _notify();
+  }
 
   /// Sets [activity] at once (before any await), takes the shared run
   /// lock, runs [work], and frees both. Busy or failed: [onRefused] gets
@@ -336,6 +555,7 @@ class BackupController extends ChangeNotifier {
       }
     } finally {
       _cancel = null;
+      _progress = null;
       _activity = BackupActivity.idle;
     }
   }
@@ -355,6 +575,15 @@ class BackupControllerStatusSource extends ChangeNotifier
 
   @override
   BackupActivity get activity => controller.activity;
+
+  @override
+  BackupLiveProgress? get progress => controller.progress;
+
+  @override
+  Future<void> stop() => controller.stop();
+
+  @override
+  Future<List<BackupFolderChoice>> loadFolders() => controller.loadFolders();
 
   @override
   BackupRunSummary? get lastRun => controller.lastRunSummary;

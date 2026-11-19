@@ -117,12 +117,18 @@ BackupStatusSource appBackupStatusSource(Ref ref, BackupStateStore store) {
       clientSoftware: appClientSoftware,
       deviceName: ref.read(deviceNameProvider),
     ),
+    manualLauncher: Platform.isAndroid
+        ? WorkmanagerManualBackupLauncher(
+            clientSoftware: appClientSoftware,
+            deviceName: ref.read(deviceNameProvider),
+          )
+        : null,
     log: log.note,
   );
   final source = BackupControllerStatusSource(controller);
   unawaited(controller.start());
   ref.onDispose(() {
-    controller.stop();
+    unawaited(controller.stop());
     source.dispose();
     controller.dispose();
   });

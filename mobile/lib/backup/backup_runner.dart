@@ -1,18 +1,18 @@
 /// One backup run, and "verify backup" (M6).
 ///
 /// ```
-///  runOnce
+///  runOnce(folderIds: chosen folders; null = Camera, D-037)
 ///   requestAccess ─► none → stop (noMediaAccess)
-///   scan all items ─► pick new/changed (no record, never backed up,
-///                     or path/size/mtime differ) ─► newest first
-///   nothing to do → stop (no connection made)
-///   connect ─► fails → stop (connectFailed)
-///   for each item, while budget and cancel allow:
-///     originalFile ─► UploadEngine.upload(remote path = item.relativePath)
+///   listFolders ─► total for the progress bar
+///   stream the folders' items (Camera first, newest first), while budget
+///   and cancel allow:
+///     unchanged (record matches path/size/mtime) ─► skip
+///     new/changed ─► connect on the first one (fails → stop connectFailed)
+///       originalFile ─► UploadEngine.upload(remote path = item.relativePath)
 ///       uploaded / already backed up ─► record version id
 ///       connection lost ─► stop (connectionLost)
 ///       other failure ─► record error on the item, go on
-///   close
+///   nothing new → no connection made; close
 ///
 ///  verifyAll: same loop over items already backed up and unchanged:
 ///   re-hash + FileOffer ─► existing version (fine)
@@ -21,7 +21,9 @@
 ///
 /// Order is newest first: the newest photos exist only on the phone, and
 /// M4 "a new photo appears on the server" must not wait days behind a
-/// first backup of 20 000 old photos. A stopped run loses nothing: the
+/// first backup of 20 000 old photos. Uploads start while the scan goes
+/// on (D-038): a big library never uses the whole budget on scanning
+/// before the first upload. A stopped run loses nothing: the
 /// server keeps the chunks it confirmed and the next run's offer asks
 /// only for the rest. Author: Hao Tran.
 library;
@@ -83,14 +85,30 @@ final class BackupProgress {
     required this.itemsTotal,
     required this.currentPath,
     this.upload,
+    this.filesUploaded = 0,
+    this.bytesUploaded = 0,
   });
 
+  /// runOnce: photos looked at so far. verifyAll: files checked.
   final int itemsDone;
+
+  /// runOnce: photos in the chosen folders when the run started (an
+  /// estimate: the library can change during the run). verifyAll: files
+  /// to check.
   final int itemsTotal;
+
+  /// The item being looked at or sent; empty before the first one.
   final String currentPath;
 
   /// Chunk progress of the current file, when chunks are being sent.
   final UploadProgress? upload;
+
+  /// Files uploaded so far in this run.
+  final int filesUploaded;
+
+  /// Bytes uploaded so far in this run, the current file's sent chunks
+  /// included.
+  final int bytesUploaded;
 }
 
 typedef BackupProgressCallback = void Function(BackupProgress progress);
@@ -206,7 +224,12 @@ class BackupRunner {
   static bool needsUpload(MediaItem item, BackupRecord? record) =>
       record == null || !record.isBackedUp || !record.matches(item);
 
+  /// Shown when no chosen folder exists on the phone.
+  static const noFoldersText =
+      'No folders to back up: choose them on the Backup screen.';
+
   Future<BackupRunReport> runOnce({
+    Set<String>? folderIds,
     Duration budget = defaultRunBudget,
     UploadCancel? cancel,
     BackupProgressCallback? onProgress,
@@ -222,30 +245,39 @@ class BackupRunner {
       );
     }
 
-    final items = await mediaSource.listItems().toList();
-    final records = await stateStore.loadAll();
-    final picked = [
-      for (final item in items)
-        if (needsUpload(item, records[item.id])) item,
-    ]..sort(_newestFirst);
-    if (picked.isEmpty) {
+    final folders = await mediaSource.listFolders();
+    final chosenIds = folderIds ?? defaultFolderIds(folders);
+    final chosenFolders = [
+      for (final folder in folders)
+        if (chosenIds.contains(folder.id)) folder,
+    ];
+    if (chosenFolders.isEmpty) {
       return _runReport(
         startedAt,
         BackupStopReason.finished,
         mediaAccess: access,
-        itemsScanned: items.length,
+        problem: noFoldersText,
       );
     }
 
+    final records = await stateStore.loadAll();
     final loop = _ItemLoop(
       runner: this,
       deadline: startedAt.add(budget),
       cancel: cancel,
       onProgress: onProgress,
-      itemsTotal: picked.length,
+      itemsTotal: chosenFolders.fold(
+        0,
+        (sum, folder) => sum + folder.itemCount,
+      ),
       knownRecords: records,
     );
-    final stop = await loop.run(picked, (engine, item, file, itemCancel) async {
+    Future<UploadResult> upload(
+      UploadEngine engine,
+      MediaItem item,
+      File file,
+      UploadCancel itemCancel,
+    ) async {
       final result = await engine.upload(
         localPath: file.path,
         remotePath: item.relativePath,
@@ -266,14 +298,39 @@ class BackupRunner {
           break;
       }
       return result;
-    });
+    }
+
+    var itemsPicked = 0;
+    _Stop stop = (reason: BackupStopReason.finished, problem: null);
+    loop.reportProgress('');
+    try {
+      await for (final item in mediaSource.listItems(folderIds: chosenIds)) {
+        if (loop.shouldStop) {
+          stop = loop.stopNow();
+          break;
+        }
+        loop.itemsDone++;
+        if (!needsUpload(item, records[item.id])) {
+          loop.reportProgress(item.relativePath);
+          continue;
+        }
+        itemsPicked++;
+        final itemStop = await loop.handle(item, upload);
+        if (itemStop != null) {
+          stop = itemStop;
+          break;
+        }
+      }
+    } finally {
+      await loop.close();
+    }
     return _runReport(
       startedAt,
       stop.reason,
       mediaAccess: access,
       problem: stop.problem,
-      itemsScanned: items.length,
-      itemsPicked: picked.length,
+      itemsScanned: loop.itemsDone,
+      itemsPicked: itemsPicked,
       filesUploaded: loop.filesUploaded,
       filesAlreadyBackedUp: loop.filesAlreadyBackedUp,
       bytesUploaded: loop.bytesUploaded,
@@ -337,11 +394,11 @@ class BackupRunner {
       itemsTotal: toCheck.length,
       knownRecords: recordsById,
     );
-    final stop = await loop.run([for (final (item, _) in toCheck) item], (
-      engine,
-      item,
-      file,
-      itemCancel,
+    Future<UploadResult> check(
+      UploadEngine engine,
+      MediaItem item,
+      File file,
+      UploadCancel itemCancel,
     ) async {
       final result = await engine.upload(
         localPath: file.path,
@@ -377,7 +434,21 @@ class BackupRunner {
           break;
       }
       return result;
-    });
+    }
+
+    _Stop stop = (reason: BackupStopReason.finished, problem: null);
+    try {
+      for (final (item, _) in toCheck) {
+        final itemStop = await loop.handle(item, check);
+        if (itemStop != null) {
+          stop = itemStop;
+          break;
+        }
+        loop.itemsDone++;
+      }
+    } finally {
+      await loop.close();
+    }
     return _verifyReport(
       startedAt,
       stop.reason,
@@ -388,11 +459,6 @@ class BackupRunner {
       filesChangedOnPhone: filesChangedOnPhone,
       failures: loop.failures,
     );
-  }
-
-  static int _newestFirst(MediaItem first, MediaItem second) {
-    final byTime = second.modifiedTimeMs.compareTo(first.modifiedTimeMs);
-    return byTime != 0 ? byTime : first.id.compareTo(second.id);
   }
 
   static BackupRecord _backedUpRecord(
@@ -464,8 +530,12 @@ typedef _ItemAction = Future<UploadResult> Function(
   UploadCancel itemCancel,
 );
 
-/// The loop both [BackupRunner.runOnce] and [BackupRunner.verifyAll]
-/// share: connect, budget and cancel checks, per-item errors, close.
+/// Why a loop stopped early, for the report.
+typedef _Stop = ({BackupStopReason reason, String? problem});
+
+/// What [BackupRunner.runOnce] and [BackupRunner.verifyAll] share:
+/// connect on the first item, budget and cancel checks, per-item errors,
+/// progress, close.
 final class _ItemLoop {
   _ItemLoop({
     required this.runner,
@@ -487,11 +557,15 @@ final class _ItemLoop {
   final BackupProgressCallback? onProgress;
   final int itemsTotal;
 
+  /// Counted by the caller (see [BackupProgress.itemsDone]).
   int itemsDone = 0;
   int filesUploaded = 0;
   int filesAlreadyBackedUp = 0;
   int bytesUploaded = 0;
   final failures = <BackupItemFailure>[];
+
+  NasConnection? _connection;
+  UploadEngine? _engine;
 
   /// Set when the budget or [cancel] stops the current file mid-way.
   UploadCancel _itemCancel = UploadCancel();
@@ -503,78 +577,72 @@ final class _ItemLoop {
 
   bool get _isCancelled => cancel?.isCancelled ?? false;
 
+  bool get shouldStop => _isCancelled || _isPastDeadline;
+
+  void reportProgress(String currentPath, [UploadProgress? upload]) =>
+      onProgress?.call(
+        BackupProgress(
+          itemsDone: itemsDone,
+          itemsTotal: itemsTotal,
+          currentPath: currentPath,
+          upload: upload,
+          filesUploaded: filesUploaded,
+          bytesUploaded: bytesUploaded + (upload?.bytesSent ?? 0),
+        ),
+      );
+
   /// The upload's chunk callback: reports progress and stops the file
   /// between chunks when the budget is used or [cancel] was called.
   void Function(UploadProgress) progressFor(MediaItem item) => (upload) {
-    if (_isPastDeadline || _isCancelled) _itemCancel.cancel();
-    onProgress?.call(
-      BackupProgress(
-        itemsDone: itemsDone,
-        itemsTotal: itemsTotal,
-        currentPath: item.relativePath,
-        upload: upload,
-      ),
-    );
+    if (shouldStop) _itemCancel.cancel();
+    reportProgress(item.relativePath, upload);
   };
 
-  ({BackupStopReason reason, String? problem}) _stopNow() => _isCancelled
+  _Stop stopNow() => _isCancelled
       ? (reason: BackupStopReason.cancelled, problem: 'Stopped.')
       : (
           reason: BackupStopReason.budgetUsed,
           problem: 'Time is up for this run; the next run goes on.',
         );
 
-  Future<({BackupStopReason reason, String? problem})> run(
-    List<MediaItem> items,
-    _ItemAction action,
-  ) async {
-    if (_isCancelled || _isPastDeadline) return _stopNow();
-    final NasConnection connection;
-    try {
-      connection = await runner.connect();
-    } on Exception catch (error) {
-      return (
-        reason: BackupStopReason.connectFailed,
-        problem: 'Server not reachable: $error',
-      );
-    }
-    final engine = UploadEngine(connection);
-    try {
-      for (final item in items) {
-        if (_isCancelled || _isPastDeadline) return _stopNow();
-        onProgress?.call(
-          BackupProgress(
-            itemsDone: itemsDone,
-            itemsTotal: itemsTotal,
-            currentPath: item.relativePath,
-          ),
+  /// Sends [item] through [action], connecting first if this is the
+  /// first one. Null = go on; else why the loop must stop.
+  Future<_Stop?> handle(MediaItem item, _ItemAction action) async {
+    if (shouldStop) return stopNow();
+    var engine = _engine;
+    if (engine == null) {
+      try {
+        final connection = _connection = await runner.connect();
+        engine = _engine = UploadEngine(connection);
+      } on Exception catch (error) {
+        return (
+          reason: BackupStopReason.connectFailed,
+          problem: 'Server not reachable: $error',
         );
-        _itemCancel = UploadCancel();
-        final result = await _handleItem(engine, item, action);
-        switch (result) {
-          case UploadCancelled():
-            return _stopNow();
-          case UploadFailed(
-            kind: UploadFailureKind.connectionLost,
-            :final message,
-          ):
-            return (
-              reason: BackupStopReason.connectionLost,
-              problem: 'Connection lost: $message',
-            );
-          case UploadFailed(:final message):
-            failures.add((remotePath: item.relativePath, message: message));
-            await _recordError(item, message);
-          case UploadUploaded() || UploadAlreadyBackedUp():
-            break;
-        }
-        itemsDone++;
       }
-      return (reason: BackupStopReason.finished, problem: null);
-    } finally {
-      await connection.close();
     }
+    reportProgress(item.relativePath);
+    _itemCancel = UploadCancel();
+    final result = await _handleItem(engine, item, action);
+    switch (result) {
+      case UploadCancelled():
+        return stopNow();
+      case UploadFailed(kind: UploadFailureKind.connectionLost, :final message):
+        return (
+          reason: BackupStopReason.connectionLost,
+          problem: 'Connection lost: $message',
+        );
+      case UploadFailed(:final message):
+        failures.add((remotePath: item.relativePath, message: message));
+        await _recordError(item, message);
+      case UploadUploaded() || UploadAlreadyBackedUp():
+        break;
+    }
+    return null;
   }
+
+  /// Closes the connection, if one was opened.
+  Future<void> close() async => _connection?.close();
 
   Future<UploadResult> _handleItem(
     UploadEngine engine,

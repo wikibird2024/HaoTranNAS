@@ -174,7 +174,7 @@ void main() {
         expect(first.stopReason, BackupStopReason.budgetUsed);
         expect(first.problem, contains('next run'));
         expect(first.filesUploaded, 2);
-        expect(first.itemsLeft, 1);
+        expect(first.itemsScanned, 2, reason: 'the 3rd is not looked at');
         expect(nas.committedPaths(), hasLength(2));
 
         final second = await runner.runOnce(budget: const Duration(minutes: 6));
@@ -239,7 +239,7 @@ void main() {
 
       expect(report.stopReason, BackupStopReason.cancelled);
       expect(report.filesUploaded, 1);
-      expect(report.itemsLeft, 2);
+      expect(report.itemsScanned, 1, reason: 'the rest is not even looked at');
     });
 
     test('a per-item error is recorded and the run goes on', () async {
@@ -322,7 +322,7 @@ void main() {
       expect(report.problem, contains('Connection lost'));
       expect(report.filesUploaded, 1);
       expect(report.filesFailed, 0, reason: 'not the files\' fault');
-      expect(report.itemsLeft, 2);
+      expect(report.itemsLeft, 1, reason: 'the 2nd; the 3rd is not looked at');
       expect((await store.loadAll()).length, 1);
     });
 
@@ -334,8 +334,8 @@ void main() {
 
       expect(report.stopReason, BackupStopReason.connectFailed);
       expect(report.problem, contains('No address worked'));
-      expect(report.itemsPicked, 3);
-      expect(report.itemsLeft, 3);
+      expect(report.itemsPicked, 1, reason: 'stops at the first new photo');
+      expect(report.itemsLeft, 1);
     });
 
     test('no photo access: stops before scanning', () async {
@@ -359,6 +359,65 @@ void main() {
       expect(report.filesUploaded, 3);
     });
 
+    test('uploads start before the scan ends (D-038)', () async {
+      for (var index = 0; index < 50; index++) {
+        media.put('p$index', [index], modifiedTimeMs: baseTimeMs - index);
+      }
+      final checkedAtFirstOffer = <int>[];
+      final progress = <BackupProgress>[];
+      nas.server.onRequest = (request) {
+        if (request is FileOffer && checkedAtFirstOffer.isEmpty) {
+          checkedAtFirstOffer.add(progress.last.itemsDone);
+        }
+      };
+
+      final report = await runner.runOnce(onProgress: progress.add);
+
+      expect(report.filesUploaded, 50);
+      expect(checkedAtFirstOffer.single, 1, reason: 'not after all 50');
+      expect(nas.connectCalls, 1);
+    });
+
+    test('only the chosen folders; a photo in two albums goes once', () async {
+      media
+        ..folderNames['shots'] = 'Screenshots'
+        ..folderNames['chat'] = 'WhatsApp Images'
+        ..put('cam', [1])
+        ..put('both', [2], folderIds: {fakeCameraFolderId, 'shots'})
+        ..put('chat', [3], folderIds: {'chat'});
+
+      final report = await runner.runOnce(
+        folderIds: {fakeCameraFolderId, 'shots'},
+      );
+
+      expect(report.itemsScanned, 2);
+      expect(
+        nas.offeredPaths(),
+        unorderedEquals(['DCIM/Camera/cam.jpg', 'DCIM/Camera/both.jpg']),
+      );
+    });
+
+    test('never chosen = Camera only (D-037)', () async {
+      media
+        ..folderNames['shots'] = 'Screenshots'
+        ..put('cam', [1])
+        ..put('shot', [2], folderIds: {'shots'});
+
+      final report = await runner.runOnce();
+
+      expect(report.itemsScanned, 1);
+      expect(nas.offeredPaths(), ['DCIM/Camera/cam.jpg']);
+    });
+
+    test('no chosen folder on the phone: says so, no connection', () async {
+      media.put('a', [1]);
+
+      final report = await runner.runOnce(folderIds: {'gone'});
+
+      expect(report.problem, BackupRunner.noFoldersText);
+      expect(nas.connectCalls, 0);
+    });
+
     test('progress reports each file and its chunks', () async {
       media.put('a', content(1, chunkCount: 1));
       final progress = <BackupProgress>[];
@@ -366,8 +425,17 @@ void main() {
       await runner.runOnce(onProgress: progress.add);
 
       expect(progress.first.itemsTotal, 1);
-      expect(progress.first.currentPath, 'DCIM/Camera/a.jpg');
+      expect(
+        progress.first.currentPath,
+        '',
+        reason: 'reported before the scan',
+      );
+      expect(
+        progress.map((step) => step.currentPath),
+        contains('DCIM/Camera/a.jpg'),
+      );
       expect(progress.where((step) => step.upload != null), hasLength(2));
+      expect(progress.last.bytesUploaded, greaterThan(0));
     });
   });
 

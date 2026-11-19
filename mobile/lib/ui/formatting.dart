@@ -15,6 +15,17 @@ String formatBytes(int sizeBytes) {
   return '${value.toStringAsFixed(1)} ${units[unitIndex]}';
 }
 
+/// `1 240`: thousands split by a space, easy to read on a phone.
+String formatCount(int count) {
+  final digits = count.toString();
+  final grouped = StringBuffer();
+  for (var index = 0; index < digits.length; index++) {
+    if (index > 0 && (digits.length - index) % 3 == 0) grouped.write(' ');
+    grouped.write(digits[index]);
+  }
+  return grouped.toString();
+}
+
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
 /// `2026-11-19 14:05` in local time.

@@ -96,12 +96,14 @@ Same layering as Protocol Lab: **codec = pure bytes, Link = I/O, screens = glue.
 
 ```
  Background job (workmanager plugin; Wi-Fi only, optional: only while charging; stops at 9 min)
+ "Back up now" (workmanager one-off job, foreground service + notification, up to 5 h, D-038)
    │
    ▼
  Address book ► mDNS (foreground only: needs the Wi-Fi multicast lock)
    │            else last LAN address that worked, else WireGuard address
    ▼
- Scanner ────► new/changed photos and files (photo_manager; path, size_bytes, modified_time_ms vs local DB)
+ Scanner ────► chosen albums (Camera by default, D-037), newest first, streamed: each new/changed
+   │           photo is uploaded as soon as it is found (path, size_bytes, modified_time_ms vs local DB)
    │
    ▼
  Chunker ────► 1 MiB chunks + SHA-256 each + whole-file SHA-256 (Dart crypto, in an isolate)
@@ -112,12 +114,15 @@ Same layering as Protocol Lab: **codec = pure bytes, Link = I/O, screens = glue.
    ▼
  Local DB ───► sqflite: file marked "backed up" with version_id
 
- Screens: Pairing · Backup status · Browse + restore · Settings · Debug log
+ Screens: Pairing ─► Home with 3 tabs: Backup (live numbers, Stop, folders) · Files (browse + restore)
+          · Settings (switches, debug log, unpair)
 ```
 
 | Rule | Why |
 |---|---|
-| A run uploads newest first and stops at its budget (9 min background, 15 min "Back up now"); the next run re-offers and sends only missing chunks (D-032) | Today's photo must not wait behind 20,000 old ones |
+| A run uploads newest first and stops at its budget (9 min background, 5 h "Back up now" job); the next run re-offers and sends only missing chunks (D-032, D-038) | Today's photo must not wait behind 20,000 old ones |
+| Only chosen albums are backed up; never chosen = Camera (D-037) | A first backup of a whole phone is too big to start with |
+| The app and the "Back up now" job run in different isolates: progress goes job → app through workmanager, Stop goes app → job through the `stop_requested` value (D-038) | The job outlives the app screen |
 | Backup state, settings, last reports and a run lock live in one SQLite file (D-033) | The app and the background job share it; the lock stops both uploading at once |
 | "Back up now" ignores the Wi-Fi/charging settings; they shape only the background job (D-034) | A tap is an explicit request |
 | "Verify backup" re-offers every backed-up file; the server asks for any chunk scrub marked bad (spec §8) | Repair without ZFS (M6) |

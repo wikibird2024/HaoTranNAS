@@ -1,6 +1,7 @@
-/// Settings: backup on/off, Wi-Fi only, charging only (through
-/// `BackupStatusSource`), and unpair (deletes this phone's certificate
-/// and key after a confirm dialog). Author: Hao Tran.
+/// Settings tab: backup on/off, Wi-Fi only, charging only (through
+/// `BackupStatusSource`), the paired NAS, the debug log, and unpair
+/// (deletes this phone's certificate and key after a confirm dialog).
+/// Author: Hao Tran.
 library;
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers.dart';
 import 'backup_status_source.dart';
+import 'debug_log_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -85,6 +87,16 @@ class SettingsScreen extends ConsumerWidget {
                     'device ${identity.deviceId}',
                   ),
                 ),
+              ListTile(
+                leading: const Icon(Icons.receipt_long),
+                title: const Text('Debug log'),
+                subtitle: const Text('What the app sent and received'),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const DebugLogScreen(),
+                  ),
+                ),
+              ),
               ListTile(
                 leading: Icon(
                   Icons.link_off,

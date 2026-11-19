@@ -1,5 +1,6 @@
 /// The automatic backup: a periodic workmanager job that runs
-/// [BackupRunner.runOnce] for up to 9 minutes.
+/// [BackupRunner.runOnce] for up to 9 minutes; and "Back up now": a
+/// one-off long-running job with a notification (D-038).
 ///
 /// ```
 ///  settings ─► planBackgroundTask ─► registerPeriodicTask(every 15 min,
@@ -13,6 +14,12 @@
 ///         connect: cached addresses only (last LAN, WireGuard), NO mDNS:
 ///         the multicast lock is foreground only (D-012, spec §13)
 ///         runOnce(9 min) ─► last_run saved for the Status screen
+///
+///  "Back up now" ─► registerOneOffTask(foreground service, dataSync,
+///                   notification "Backing up your photos")
+///    ─► runBackgroundBackup(manual): no backup-on / Wi-Fi rule, up to 5 h,
+///         every second: stop_requested? → cancel; every minute: lock refreshed
+///         progress (≤ 2/s) + "done" ─► app through workmanager progress
 /// ```
 ///
 /// The app's Hello names (`client_software`, `device_name`) travel in
@@ -20,13 +27,16 @@
 /// exactly like the app. Author: Hao Tran.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../client/address_book.dart';
 import '../client/identity.dart';
 import '../client/nas_connection.dart';
+import '../client/upload_engine.dart';
 import '../ui/backup_status_source.dart';
 import 'backup_controller.dart';
 import 'backup_runner.dart';
@@ -35,6 +45,19 @@ import 'media_source.dart';
 
 const backupTaskUniqueName = 'haotrannas-auto-backup';
 const backupTaskName = 'auto-backup';
+const manualBackupTaskUniqueName = 'haotrannas-backup-now';
+const manualBackupTaskName = 'backup-now';
+
+/// "Back up now" runs at most this long. ⚪ Android 15 allows a dataSync
+/// foreground service about 6 h a day.
+const manualRunBudget = Duration(hours: 5);
+
+/// The long job reports progress at most this often.
+const progressReportInterval = Duration(milliseconds: 500);
+
+/// How often the long job looks for "stop" and refreshes the run lock.
+const stopCheckInterval = Duration(seconds: 1);
+const runLockRefreshInterval = Duration(minutes: 1);
 
 /// Android's shortest period for periodic work.
 const backgroundRunInterval = Duration(minutes: 15);
@@ -111,6 +134,63 @@ class WorkmanagerBackupScheduler implements BackupScheduler {
   }
 }
 
+/// "Back up now" through workmanager (Android only).
+class WorkmanagerManualBackupLauncher implements ManualBackupLauncher {
+  WorkmanagerManualBackupLauncher({
+    required this.clientSoftware,
+    required this.deviceName,
+  });
+
+  final String clientSoftware;
+  final String deviceName;
+
+  /// Native side: `MainActivity.kt`.
+  static const _notificationChannel = MethodChannel(
+    'vn.haotran.haotrannas_mobile/notifications',
+  );
+
+  @override
+  Future<void> start() async {
+    try {
+      // Android 13+: without it the backup still runs, only unseen.
+      await _notificationChannel.invokeMethod<bool>('request');
+    } on PlatformException catch (_) {
+    } on MissingPluginException catch (_) {}
+    await Workmanager().registerOneOffTask(
+      manualBackupTaskUniqueName,
+      manualBackupTaskName,
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+      constraints: Constraints(networkType: NetworkType.connected),
+      inputData: backgroundInputData(
+        clientSoftware: clientSoftware,
+        deviceName: deviceName,
+      ),
+      foregroundServiceConfig: ForegroundServiceConfig(
+        notificationTitle: 'HaoTranNAS',
+        notificationText: 'Backing up your photos',
+        notificationChannelId: 'haotrannas_backup',
+        notificationChannelName: 'Backup',
+        foregroundServiceType: ForegroundServiceType.dataSync,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> isRunning() async {
+    final info = await Workmanager().getWorkInfo(manualBackupTaskUniqueName);
+    return info?.state == WorkState.running ||
+        info?.state == WorkState.scheduled;
+  }
+
+  @override
+  void listen(void Function(Map<String, Object?> progress) onProgress) =>
+      unawaited(
+        Workmanager().setProgressListener((uniqueName, progress) {
+          if (uniqueName == manualBackupTaskUniqueName) onProgress(progress);
+        }),
+      );
+}
+
 /// Call once in `main()` before scheduling. Off Android it does nothing.
 Future<void> initializeBackgroundBackup() async {
   if (!Platform.isAndroid) return;
@@ -133,6 +213,7 @@ Future<bool> _runFromPlugin(
     await runBackgroundBackup(
       taskName: taskName,
       inputData: inputData,
+      reportProgress: (progress) => Workmanager().reportProgress(progress),
       loadIdentity: identityStore.load,
       stateStore: stateStore,
       mediaSource: PhotoManagerMediaSource(isBackground: true),
@@ -217,37 +298,109 @@ runBackgroundBackup({
   required BackupStateStore stateStore,
   required MediaSource mediaSource,
   required PairedConnector connectPaired,
+  Future<void> Function(Map<String, Object?> progress)? reportProgress,
   DateTime Function()? clock,
-  Duration budget = defaultRunBudget,
+  Duration? budget,
+  Duration stopCheckEvery = stopCheckInterval,
 }) async {
   final now = clock ?? DateTime.now;
-  ({BackgroundOutcome outcome, BackupRunReport? report}) stopped(
-    BackgroundOutcome outcome,
-  ) => (outcome: outcome, report: null);
+  final startedAt = now();
+  final isManual = taskName == manualBackupTaskName;
 
-  if (taskName != backupTaskName) return stopped(BackgroundOutcome.notOurTask);
+  /// Only the manual job reports; a failed report never stops the run.
+  Future<void> report({BackupProgress? progress, String? problem}) async {
+    if (!isManual || reportProgress == null) return;
+    try {
+      await reportProgress(
+        encodeWorkerProgress(
+          isDone: progress == null,
+          startedAt: startedAt,
+          progress: progress,
+          problem: problem,
+        ),
+      );
+    } on Exception catch (_) {}
+  }
+
+  Future<({BackgroundOutcome outcome, BackupRunReport? report})> stopped(
+    BackgroundOutcome outcome, {
+    String? problem,
+  }) async {
+    await report(problem: problem);
+    return (outcome: outcome, report: null);
+  }
+
+  if (taskName != backupTaskName && !isManual) {
+    return (outcome: BackgroundOutcome.notOurTask, report: null);
+  }
   final settings = decodeSettings(
     await stateStore.readValue(settingsValueName),
   );
-  if (!settings.isBackupOn) return stopped(BackgroundOutcome.backupOff);
+  if (!isManual && !settings.isBackupOn) {
+    return stopped(BackgroundOutcome.backupOff);
+  }
   final clientSoftware = inputData?[_clientSoftwareKey];
   final deviceName = inputData?[_deviceNameKey];
   if (clientSoftware is! String || deviceName is! String) {
-    return stopped(BackgroundOutcome.missingInputData);
+    return stopped(
+      BackgroundOutcome.missingInputData,
+      problem: 'The backup job started without its settings.',
+    );
   }
   final DeviceIdentity? identity;
   try {
     identity = await loadIdentity();
   } on IdentityDamaged {
-    return stopped(BackgroundOutcome.identityDamaged);
+    return stopped(
+      BackgroundOutcome.identityDamaged,
+      problem: 'The pairing files are damaged: unpair and pair again.',
+    );
   }
-  if (identity == null) return stopped(BackgroundOutcome.notPaired);
+  if (identity == null) {
+    return stopped(
+      BackgroundOutcome.notPaired,
+      problem: 'This phone is not paired.',
+    );
+  }
   final pairedIdentity = identity;
 
   final lockOwner = 'background-${now().microsecondsSinceEpoch}';
   if (!await stateStore.claimRunLock(lockOwner, now().millisecondsSinceEpoch)) {
-    return stopped(BackgroundOutcome.busy);
+    return stopped(
+      BackgroundOutcome.busy,
+      problem: '${BackupController.busyText} (in the background)',
+    );
   }
+  final cancel = UploadCancel();
+  Timer? stopWatch;
+  if (isManual) {
+    var lastLockRefreshAt = now();
+    stopWatch = Timer.periodic(stopCheckEvery, (_) async {
+      try {
+        final stopText = await stateStore.readValue(stopRequestedValueName);
+        if (stopText == stopRequestedYes) cancel.cancel();
+        if (now().difference(lastLockRefreshAt) >= runLockRefreshInterval) {
+          lastLockRefreshAt = now();
+          // A long run must not look dead to the periodic job.
+          await stateStore.claimRunLock(
+            lockOwner,
+            now().millisecondsSinceEpoch,
+          );
+        }
+      } on Exception catch (_) {}
+    });
+  }
+  DateTime? lastReportAt;
+  void onProgress(BackupProgress progress) {
+    final at = now();
+    if (lastReportAt != null &&
+        at.difference(lastReportAt!) < progressReportInterval) {
+      return;
+    }
+    lastReportAt = at;
+    unawaited(report(progress: progress));
+  }
+
   try {
     final runner = BackupRunner(
       mediaSource: mediaSource,
@@ -259,9 +412,14 @@ runBackgroundBackup({
       ),
       clock: now,
     );
-    final BackupRunReport report;
+    final BackupRunReport runReport;
     try {
-      report = await runner.runOnce(budget: budget);
+      runReport = await runner.runOnce(
+        folderIds: settings.chosenFolderIds,
+        budget: budget ?? (isManual ? manualRunBudget : defaultRunBudget),
+        cancel: cancel,
+        onProgress: onProgress,
+      );
     } on Exception catch (error) {
       // A plugin or disk error outside the per-item handling.
       await stateStore.writeValue(
@@ -277,14 +435,16 @@ runBackgroundBackup({
           ),
         ),
       );
-      return stopped(BackgroundOutcome.failed);
+      return await stopped(BackgroundOutcome.failed);
     }
     await stateStore.writeValue(
       lastRunValueName,
-      encodeRunSummary(summaryOfRun(report)),
+      encodeRunSummary(summaryOfRun(runReport)),
     );
-    return (outcome: BackgroundOutcome.ran, report: report);
+    await report();
+    return (outcome: BackgroundOutcome.ran, report: runReport);
   } finally {
+    stopWatch?.cancel();
     await stateStore.releaseRunLock(lockOwner);
   }
 }

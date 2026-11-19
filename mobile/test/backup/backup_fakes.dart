@@ -10,7 +10,11 @@ import 'package:haotrannas_mobile/protocol/messages.dart';
 
 import '../client/fake_upload_server.dart';
 
-/// A photo library in a temp folder.
+/// Album id of the fake's Camera album (where [FakeMediaSource.put]
+/// puts photos unless told otherwise).
+const fakeCameraFolderId = 'camera';
+
+/// A photo library in a temp folder, in albums.
 class FakeMediaSource implements MediaSource {
   FakeMediaSource(this.folder);
 
@@ -18,6 +22,15 @@ class FakeMediaSource implements MediaSource {
   MediaAccess access = const MediaAccess(MediaAccessLevel.all);
   final itemsById = <String, MediaItem>{};
   final releasedIds = <String>[];
+
+  /// Album id → album name; Camera is always there.
+  final folderNames = <String, String>{fakeCameraFolderId: 'Camera'};
+
+  /// Media id → album ids it is in (a photo can be in two).
+  final folderIdsOf = <String, Set<String>>{};
+
+  /// Folder ids asked for by the last [listItems].
+  Set<String>? lastListedFolderIds;
 
   /// When set, [requestAccess] waits for it (holds a run at its start).
   Completer<void>? accessGate;
@@ -37,8 +50,10 @@ class FakeMediaSource implements MediaSource {
     String? remotePath,
     int modifiedTimeMs = 1763450000000,
     MediaKind kind = MediaKind.image,
+    Set<String> folderIds = const {fakeCameraFolderId},
   }) {
     fileFor(id).writeAsBytesSync(bytes);
+    folderIdsOf[id] = folderIds;
     final item = MediaItem(
       id: id,
       relativePath: remotePath ?? 'DCIM/Camera/$id.jpg',
@@ -53,16 +68,45 @@ class FakeMediaSource implements MediaSource {
   /// Deletes the photo from the phone.
   void remove(String id) {
     itemsById.remove(id);
+    folderIdsOf.remove(id);
     fileFor(id).deleteSync();
   }
 
+  List<MediaFolder> get _folders => [
+    for (final MapEntry(key: id, value: name) in folderNames.entries)
+      MediaFolder(
+        id: id,
+        name: name,
+        itemCount: folderIdsOf.values.where((ids) => ids.contains(id)).length,
+      ),
+  ];
+
   @override
-  Stream<MediaItem> listItems({DateTime? changedSince}) => Stream.fromIterable([
-    for (final item in itemsById.values)
-      if (changedSince == null ||
-          item.modifiedTimeMs >= changedSince.millisecondsSinceEpoch)
-        item,
-  ]);
+  Future<List<MediaFolder>> listFolders() async => _folders;
+
+  /// Like the real source: Camera first, each folder newest first, each
+  /// item once.
+  @override
+  Stream<MediaItem> listItems({Set<String>? folderIds}) {
+    lastListedFolderIds = folderIds;
+    final seenIds = <String>{};
+    final items = <MediaItem>[];
+    for (final folder in inBackupOrder(_folders)) {
+      if (folderIds != null && !folderIds.contains(folder.id)) continue;
+      final inFolder =
+          [
+            for (final item in itemsById.values)
+              if (folderIdsOf[item.id]!.contains(folder.id)) item,
+          ]..sort((first, second) {
+            final byTime = second.modifiedTimeMs.compareTo(
+              first.modifiedTimeMs,
+            );
+            return byTime != 0 ? byTime : first.id.compareTo(second.id);
+          });
+      items.addAll(inFolder.where((item) => seenIds.add(item.id)));
+    }
+    return Stream.fromIterable(items);
+  }
 
   @override
   Future<File?> originalFile(MediaItem item) async {

@@ -98,12 +98,18 @@ dart:io facts checked on this PC (`test/core/tls_link_test.dart`):
      settings off / not paired / run lock taken ─► stop
      IdentityStore + SqfliteBackupStateStore + AddressBook (cached addresses, NO mDNS: D-012)
      BackupRunner.runOnce(budget 9 min)
- App: "Back up now" (mDNS allowed, budget 15 min) · "Verify backup" (no limit)
+ App: "Back up now" ─► one-off workmanager job "haotrannas-backup-now" (D-038)
+        foreground service (dataSync) + notification "Backing up your photos", budget 5 h,
+        cached addresses only; progress ≤ 2/s ─► app; Stop ─► stop_requested ─► job
+        (off Android / in tests: runs in the app, budget 15 min)
+      "Verify backup" (in the app, no limit)
 
- runOnce
+ runOnce(chosen albums; never chosen = Camera, D-037)
    MediaSource.requestAccess ─► none → stop
-   scan all photos/videos ─► pick: no record / never backed up / path, size or mtime differ
-   newest first ─► UploadEngine.upload(original file, remote path = MediaItem.relativePath)
+   stream the albums' photos/videos, Camera first, each newest first:
+     unchanged (record matches path, size, mtime) ─► skip
+     new/changed ─► connect on the first one ─► UploadEngine.upload(original file,
+       remote path = MediaItem.relativePath)
      uploaded / already backed up ─► record version id      other failure ─► record error, go on
      budget used / cancel ─► stop between chunks (server keeps them; next run resumes)
      connection lost ─► stop
@@ -114,11 +120,12 @@ dart:io facts checked on this PC (`test/core/tls_link_test.dart`):
 
 | Piece | File | Notes |
 |---|---|---|
-| `MediaSource`, `PhotoManagerMediaSource`, `mediaRemotePath` | `lib/backup/media_source.dart` | photo_manager `originFile` (setRequireOriginal; GPS kept only with ACCESS_MEDIA_LOCATION); whole library in pages of 200; path = `relative_path` + name, cleaned to pass the path rules |
+| `MediaSource`, `PhotoManagerMediaSource`, `mediaRemotePath` | `lib/backup/media_source.dart` | photo_manager `originFile` (setRequireOriginal; GPS kept only with ACCESS_MEDIA_LOCATION); albums (`listFolders`), chosen albums in pages of 200, newest first, each photo once; path = `relative_path` + name, cleaned to pass the path rules |
 | `BackupStateStore`, `SqfliteBackupStateStore`, `MemoryBackupStateStore` | `lib/backup/backup_state_store.dart` | `items` table (media_id PK, remote_path, size_bytes, modified_time_ms, file_sha256, version_id, backed_up_at_ms, last_verified_at_ms, last_error) + `app_values` (settings, last_run, last_verify, run_lock) |
 | `BackupRunner.runOnce`, `.verifyAll` | `lib/backup/backup_runner.dart` | Never throws for file, server or network problems: `BackupRunReport` / `VerifyReport` with a `BackupStopReason` |
 | `BackupController`, `BackupControllerStatusSource` | `lib/backup/backup_controller.dart` | What the Status and Settings screens see (`BackupStatusSource`); wired in `appBackupStatusSource` (`lib/app/providers.dart`) |
-| `planBackgroundTask`, `WorkmanagerBackupScheduler`, `runBackgroundBackup`, `backupCallbackDispatcher` | `lib/backup/background.dart` | `runBackgroundBackup` is the whole job without plugin calls (tested) |
+| `planBackgroundTask`, `WorkmanagerBackupScheduler`, `WorkmanagerManualBackupLauncher`, `runBackgroundBackup`, `backupCallbackDispatcher` | `lib/backup/background.dart` | `runBackgroundBackup` is the whole job (periodic and "Back up now") without plugin calls (tested) |
+| Screens | `lib/ui/home_screen.dart` (3 tabs), `status_screen.dart` (Backup tab), `folders_screen.dart`, `browse_screen.dart` (Files tab), `settings_screen.dart` | Live numbers come from `BackupStatusSource.progress` |
 
 Choices:
 
@@ -130,9 +137,13 @@ Choices:
 | Settings shape only the background job | "Back up now" is an explicit tap and runs on any network |
 | Background job always returns "done" | The 15-minute period is the retry; a WorkManager retry would wake the phone for the same offline server |
 | Hello names in the task's input data | The background job introduces itself exactly like the app (same `device_name`) |
-| Same SQLite value for `last_run` | A background run shows on the Status screen at the next app start |
+| Same SQLite value for `last_run` | A background run shows on the Backup tab at the next app start |
+| Upload while scanning (D-038) | A big library used the whole budget on scanning and uploaded nothing (first phone test, 2026-11-19) |
+| Albums, Camera by default (D-037) | A first backup of a whole phone is too big to start with |
 
-Known gaps: `file_sha256` stays empty for now (`UploadEngine` does not return
+Known gaps: the notification text is fixed (live numbers only in the app);
+its small icon is the app icon (workmanager picks it), so it may show as a
+plain white shape. `file_sha256` stays empty for now (`UploadEngine` does not return
 the hash it computed; hashing twice would cost battery). A scan reads every
 item's size each run (no `changedSince` shortcut yet: an item copied in with
 an old date would be missed by it). Two items that clean to the same remote
@@ -226,6 +237,10 @@ These cannot run in CI or on the dev machine; do them on a real phone.
 | Check | How | Pass when |
 |---|---|---|
 | ⚪ Photo access, all photos | First "Back up now": allow photos and videos, allow location in photos | Status shows files uploaded; `ACCESS_MEDIA_LOCATION` granted in app info |
+| ⚪ Folders | Backup tab → Folders to back up | Albums listed with counts, Camera ticked; Save keeps the choice; only those albums are uploaded |
+| ⚪ Live numbers | "Back up now" on a big library | "n of ~N photos checked" moves within seconds; first upload starts before the scan ends |
+| ⚪ Notification + Stop | "Back up now", leave the app, come back, tap Stop | Notification "Backing up your photos" while it runs (Android 13+: allow notifications); Stop ends it within a few seconds; notification gone |
+| ⚪ Long backup | "Back up now" with ~1 h of photos, screen off | Keeps going past 10 min (foreground service); next periodic job does not run at the same time |
 | ⚪ Android 14 partial access | Choose "Select photos" in the dialog, pick 2 | Only those 2 are uploaded; access is reported as "only the photos you selected" |
 | ⚪ Original file, GPS kept | Back up a photo taken with location on; `haotrannas-server restore` it | Restored bytes = the phone file byte for byte, EXIF GPS present (`exiftool`) |
 | ⚪ Without location permission | Deny "location in photos", back up a GPS photo | Note the result: photo_manager falls back to the redacted file (GPS missing); decide whether to refuse |

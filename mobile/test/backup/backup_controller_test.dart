@@ -11,6 +11,27 @@ import 'package:haotrannas_mobile/ui/backup_status_source.dart';
 
 import 'backup_fakes.dart';
 
+class FakeLauncher implements ManualBackupLauncher {
+  int startCalls = 0;
+  bool isJobRunning = false;
+  Exception? failure;
+  void Function(Map<String, Object?> progress)? onProgress;
+
+  @override
+  Future<void> start() async {
+    startCalls++;
+    final error = failure;
+    if (error != null) throw error;
+  }
+
+  @override
+  Future<bool> isRunning() async => isJobRunning;
+
+  @override
+  void listen(void Function(Map<String, Object?> progress) onProgress) =>
+      this.onProgress = onProgress;
+}
+
 class FakeScheduler implements BackupScheduler {
   final applied = <BackupSettings>[];
   Exception? failure;
@@ -302,6 +323,193 @@ void main() {
       final summary = summaryOfVerify(report);
       expect(summary.filesWrong, 2);
       expect(summary.problem, '1 files could not be checked');
+    });
+  });
+
+  group('folders', () {
+    test(
+      'never chosen: Camera is ticked; a choice is passed to the run',
+      () async {
+        media
+          ..folderNames['shots'] = 'Screenshots'
+          ..put('a', [1])
+          ..put('s', [2], folderIds: {'shots'});
+
+        final folders = await controller.loadFolders();
+        expect(
+          [for (final folder in folders) folder.name],
+          ['Camera', 'Screenshots'],
+        );
+        expect([for (final folder in folders) folder.isChosen], [true, false]);
+
+        await controller.updateSettings(
+          const BackupSettings(chosenFolderIds: {'shots'}),
+        );
+        final report = await controller.runNow();
+        expect(media.lastListedFolderIds, {'shots'});
+        expect(report!.filesUploaded, 1);
+        expect(nas.offeredPaths(), ['DCIM/Camera/s.jpg']);
+      },
+    );
+
+    test('settings keep folder ids; old saved settings have none', () {
+      const settings = BackupSettings(chosenFolderIds: {'b', 'a'});
+      expect(decodeSettings(encodeSettings(settings)).chosenFolderIds, {
+        'a',
+        'b',
+      });
+      expect(
+        decodeSettings('{"backup_on":true}').chosenFolderIds,
+        isNull,
+        reason: 'saved before D-037: Camera default',
+      );
+      expect(decodeSettings('{"folder_ids":[1]}').chosenFolderIds, isNull);
+    });
+  });
+
+  group('in-app run progress', () {
+    test('runNow shows live numbers, then clears them', () async {
+      media.put('a', [1, 2, 3]);
+      final seen = <BackupLiveProgress>[];
+      source.addListener(() {
+        final progress = source.progress;
+        if (progress != null) seen.add(progress);
+      });
+
+      await controller.runNow();
+
+      expect(seen, isNotEmpty);
+      expect(seen.first.itemsTotal, 1);
+      expect(source.progress, isNull);
+    });
+  });
+
+  group('long backup job (launcher)', () {
+    late FakeLauncher launcher;
+    late BackupController jobController;
+
+    setUp(() {
+      launcher = FakeLauncher();
+      jobController = BackupController(
+        runner: BackupRunner(
+          mediaSource: media,
+          stateStore: store,
+          connect: nas.connect,
+        ),
+        stateStore: store,
+        scheduler: scheduler,
+        manualLauncher: launcher,
+        lockOwner: 'app-job-test',
+      );
+    });
+
+    tearDown(() => jobController.dispose());
+
+    test('runNow queues the job, does not run here', () async {
+      media.put('a', [1]);
+      await jobController.start();
+      final report = await jobController.runNow();
+
+      expect(report, isNull);
+      expect(launcher.startCalls, 1);
+      expect(jobController.activity, BackupActivity.backingUp);
+      expect(
+        nas.offeredPaths(),
+        isEmpty,
+        reason: 'the job uploads, not the app',
+      );
+      expect(await store.readValue(stopRequestedValueName), 'no');
+    });
+
+    test('job progress → live numbers; done → idle + saved summary', () async {
+      await jobController.start();
+      await jobController.runNow();
+      final startedAt = DateTime(2026, 11, 19, 14);
+      launcher.onProgress!(
+        encodeWorkerProgress(
+          isDone: false,
+          startedAt: startedAt,
+          progress: const BackupProgress(
+            itemsDone: 12,
+            itemsTotal: 80,
+            currentPath: 'DCIM/Camera/x.jpg',
+            filesUploaded: 3,
+            bytesUploaded: 4096,
+          ),
+        ),
+      );
+      final live = jobController.progress!;
+      expect(live.itemsChecked, 12);
+      expect(live.itemsTotal, 80);
+      expect(live.filesUploaded, 3);
+      expect(live.bytesUploaded, 4096);
+      expect(live.currentPath, 'DCIM/Camera/x.jpg');
+      expect(live.startedAt, startedAt);
+
+      final saved = BackupRunSummary(
+        finishedAt: DateTime(2026, 11, 19, 15),
+        filesUploaded: 3,
+        filesAlreadyBackedUp: 0,
+        filesFailed: 0,
+        bytesUploaded: 4096,
+      );
+      await store.writeValue(lastRunValueName, encodeRunSummary(saved));
+      await jobController.onWorkerProgress(
+        encodeWorkerProgress(isDone: true, startedAt: startedAt),
+      );
+      expect(jobController.activity, BackupActivity.idle);
+      expect(jobController.progress, isNull);
+      expect(jobController.lastRunSummary!.filesUploaded, 3);
+    });
+
+    test('job done with a problem (busy) shows the problem', () async {
+      await jobController.start();
+      await jobController.runNow();
+      await jobController.onWorkerProgress(
+        encodeWorkerProgress(
+          isDone: true,
+          startedAt: DateTime(2026),
+          problem: 'A backup is already running. (in the background)',
+        ),
+      );
+      expect(jobController.lastRunSummary!.problem, contains('already'));
+    });
+
+    test('stop asks the job through the store', () async {
+      await jobController.start();
+      await jobController.runNow();
+      launcher.isJobRunning = true;
+      await jobController.stop();
+      expect(jobController.activity, BackupActivity.backingUp);
+      expect(await store.readValue(stopRequestedValueName), stopRequestedYes);
+    });
+
+    test('Stop when the job died without "done": idle again', () async {
+      await jobController.start();
+      await jobController.runNow();
+      launcher.isJobRunning = false;
+      await jobController.stop();
+      expect(jobController.activity, BackupActivity.idle);
+    });
+
+    test('app opened while the job runs: shows backing up', () async {
+      launcher.isJobRunning = true;
+      await jobController.start();
+      expect(jobController.activity, BackupActivity.backingUp);
+    });
+
+    test('job could not be queued: idle again, problem shown', () async {
+      launcher.failure = Exception('no workmanager');
+      await jobController.start();
+      await jobController.runNow();
+      expect(jobController.activity, BackupActivity.idle);
+      expect(jobController.lastRunSummary!.problem, contains('no workmanager'));
+    });
+
+    test('a map this app did not write is ignored', () async {
+      await jobController.start();
+      await jobController.onWorkerProgress({'state': 'weird'});
+      expect(jobController.activity, BackupActivity.idle);
     });
   });
 }

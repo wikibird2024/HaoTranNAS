@@ -3,8 +3,8 @@
 /// interface; an adapter over the real `BackupController` implements it.
 ///
 /// ```
-///  BackupController (lib/backup) ──adapter──► BackupStatusSource ──► Status, Settings
-///     start/stop/runNow/verifyAll/lastReport/settings      notifyListeners() on every change
+///  BackupController (lib/backup) ──adapter──► BackupStatusSource ──► Backup tab, Settings, Folders
+///     runNow/stop/verifyAll/progress/folders/settings     notifyListeners() on every change
 /// ```
 ///
 /// Until the adapter exists the app uses [BackupNotConnected]. Author:
@@ -58,12 +58,63 @@ final class VerifySummary {
   final String? problem;
 }
 
+/// Live numbers of the running backup or check.
+final class BackupLiveProgress {
+  const BackupLiveProgress({
+    required this.startedAt,
+    required this.itemsChecked,
+    required this.itemsTotal,
+    required this.filesUploaded,
+    required this.bytesUploaded,
+    required this.currentPath,
+  });
+
+  final DateTime startedAt;
+
+  /// Photos looked at (backup) or files checked (verify) so far.
+  final int itemsChecked;
+
+  /// About how many there are in all (the library can change meanwhile).
+  final int itemsTotal;
+  final int filesUploaded;
+  final int bytesUploaded;
+
+  /// The photo being looked at or sent; empty before the first.
+  final String currentPath;
+
+  /// 0..1 for the progress bar; null while the total is unknown.
+  double? get fraction =>
+      itemsTotal <= 0 ? null : (itemsChecked / itemsTotal).clamp(0.0, 1.0);
+
+  /// Average upload speed since [startedAt].
+  double bytesPerSecond(DateTime now) {
+    final seconds = now.difference(startedAt).inMilliseconds / 1000;
+    return seconds <= 0 ? 0 : bytesUploaded / seconds;
+  }
+}
+
+/// One phone album and whether it is backed up.
+final class BackupFolderChoice {
+  const BackupFolderChoice({
+    required this.id,
+    required this.name,
+    required this.itemCount,
+    required this.isChosen,
+  });
+
+  final String id;
+  final String name;
+  final int itemCount;
+  final bool isChosen;
+}
+
 /// The user's backup choices.
 final class BackupSettings {
   const BackupSettings({
     this.isBackupOn = true,
     this.isWifiOnly = true,
     this.isChargingOnly = false,
+    this.chosenFolderIds,
   });
 
   /// Automatic background backup runs at all.
@@ -75,14 +126,19 @@ final class BackupSettings {
   /// Runs only while the phone is charging.
   final bool isChargingOnly;
 
+  /// Albums to back up; null = never chosen: the Camera album (D-037).
+  final Set<String>? chosenFolderIds;
+
   BackupSettings copyWith({
     bool? isBackupOn,
     bool? isWifiOnly,
     bool? isChargingOnly,
+    Set<String>? chosenFolderIds,
   }) => BackupSettings(
     isBackupOn: isBackupOn ?? this.isBackupOn,
     isWifiOnly: isWifiOnly ?? this.isWifiOnly,
     isChargingOnly: isChargingOnly ?? this.isChargingOnly,
+    chosenFolderIds: chosenFolderIds ?? this.chosenFolderIds,
   );
 }
 
@@ -90,6 +146,10 @@ final class BackupSettings {
 /// [Listenable]) whenever any getter's value changes.
 abstract interface class BackupStatusSource implements Listenable {
   BackupActivity get activity;
+
+  /// Numbers of the running backup or check; null when idle or before
+  /// the first number arrives.
+  BackupLiveProgress? get progress;
 
   /// Null before the first run.
   BackupRunSummary? get lastRun;
@@ -99,9 +159,17 @@ abstract interface class BackupStatusSource implements Listenable {
 
   BackupSettings get settings;
 
-  /// Starts a backup run now (foreground). Returns when it has started
-  /// or was refused; progress comes through [activity] and [lastRun].
+  /// Starts a backup run now (a long-running job with a notification on
+  /// Android, D-038). Returns when it has started or was refused;
+  /// progress comes through [activity], [progress] and [lastRun].
   Future<void> runNow();
+
+  /// Stops the running backup or check after the current chunk.
+  Future<void> stop();
+
+  /// The phone's albums with their choice (asks for photo access first;
+  /// empty without it).
+  Future<List<BackupFolderChoice>> loadFolders();
 
   /// Re-offers every backed-up file so the server asks again for any
   /// missing or bad chunk (spec §8 repair note); the result comes through
@@ -122,6 +190,15 @@ class BackupNotConnected extends ChangeNotifier implements BackupStatusSource {
 
   @override
   BackupActivity get activity => BackupActivity.idle;
+
+  @override
+  BackupLiveProgress? get progress => null;
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<List<BackupFolderChoice>> loadFolders() async => const [];
 
   @override
   BackupRunSummary? get lastRun => _lastRun;

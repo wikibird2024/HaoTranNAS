@@ -67,9 +67,21 @@ class FakeServerConnection extends ServerConnectionController {
 class FakeBackupSource extends ChangeNotifier implements BackupStatusSource {
   int runNowCalls = 0;
   int verifyAllCalls = 0;
+  int stopCalls = 0;
 
   @override
   BackupActivity activity = BackupActivity.idle;
+
+  @override
+  BackupLiveProgress? progress;
+
+  List<BackupFolderChoice> folders = const [];
+
+  @override
+  Future<void> stop() async => stopCalls++;
+
+  @override
+  Future<List<BackupFolderChoice>> loadFolders() async => folders;
 
   @override
   BackupRunSummary? lastRun;

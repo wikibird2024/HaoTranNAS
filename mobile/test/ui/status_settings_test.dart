@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:haotrannas_mobile/app/app_start.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
 import 'package:haotrannas_mobile/ui/backup_status_source.dart';
+import 'package:haotrannas_mobile/ui/folders_screen.dart';
 import 'package:haotrannas_mobile/ui/settings_screen.dart';
 import 'package:haotrannas_mobile/ui/status_screen.dart';
 
@@ -76,12 +77,35 @@ void main() {
       expect(source.verifyAllCalls, 1);
     });
 
-    testWidgets('buttons are off while a run is going', (tester) async {
+    testWidgets('while a run goes on: live numbers, Stop, no Verify', (
+      tester,
+    ) async {
+      source.activity = BackupActivity.backingUp;
+      source.progress = BackupLiveProgress(
+        startedAt: DateTime.now().subtract(const Duration(seconds: 10)),
+        itemsChecked: 1240,
+        itemsTotal: 8300,
+        filesUploaded: 35,
+        bytesUploaded: 420 * 1024 * 1024,
+        currentPath: 'DCIM/Camera/IMG_1.jpg',
+      );
+      await pumpWithFakes(tester, const StatusScreen(), isAnimating: true);
+
+      expect(find.text('Backing up…'), findsOneWidget);
+      expect(find.text('1 240 of ~8 300 photos checked'), findsOneWidget);
+      expect(find.textContaining('35 uploaded · 420.0 MB · '), findsOneWidget);
+      expect(find.text('Now: DCIM/Camera/IMG_1.jpg'), findsOneWidget);
+      expect(find.text('Back up now'), findsNothing);
+      await tester.tap(find.text('Verify backup'));
+      expect(source.verifyAllCalls, 0);
+      await tester.tap(find.text('Stop'));
+      expect(source.stopCalls, 1);
+    });
+
+    testWidgets('before the first number: "Getting ready…"', (tester) async {
       source.activity = BackupActivity.backingUp;
       await pumpWithFakes(tester, const StatusScreen(), isAnimating: true);
-      expect(find.text('Backing up…'), findsOneWidget);
-      await tester.tap(find.text('Back up now'));
-      expect(source.runNowCalls, 0);
+      expect(find.text('Getting ready…'), findsOneWidget);
     });
 
     testWidgets('a refused phone is told to pair again', (tester) async {
@@ -90,6 +114,42 @@ void main() {
       );
       await pumpWithFakes(tester, const StatusScreen());
       expect(find.textContaining('pair again'), findsOneWidget);
+    });
+  });
+
+  group('folders', () {
+    testWidgets('tick a folder, Save → settings keep the choice', (
+      tester,
+    ) async {
+      source.folders = const [
+        BackupFolderChoice(
+          id: 'cam',
+          name: 'Camera',
+          itemCount: 6200,
+          isChosen: true,
+        ),
+        BackupFolderChoice(
+          id: 'shots',
+          name: 'Screenshots',
+          itemCount: 1800,
+          isChosen: false,
+        ),
+      ];
+      await pumpWithFakes(tester, const FoldersScreen());
+      await tester.pumpAndSettle();
+      expect(find.text('6 200 items'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('folder.shots')));
+      await tester.pump();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(source.settings.chosenFolderIds, {'cam', 'shots'});
+    });
+
+    testWidgets('no albums: tells how to allow photo access', (tester) async {
+      await pumpWithFakes(tester, const FoldersScreen());
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Allow access to photos'), findsOneWidget);
     });
   });
 
@@ -138,11 +198,17 @@ void main() {
       expect(find.text('Pair with your NAS'), findsOneWidget);
     });
 
-    testWidgets('identity → Status; unpair from Settings → Pairing', (
+    testWidgets('identity → Home tabs; unpair from Settings → Pairing', (
       tester,
     ) async {
       await pumpWithFakes(tester, const AppStart());
       expect(find.text('Back up now'), findsOneWidget);
+      expect(find.byType(NavigationDestination), findsNWidgets(3));
+
+      await tester.tap(find.text('Files'));
+      await tester.pumpAndSettle();
+      expect(find.text('Files on the NAS'), findsOneWidget);
+      expect(find.text('Back up now'), findsNothing, reason: 'other tab');
 
       await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();

@@ -1,5 +1,6 @@
 // The background job's logic through runBackgroundBackup (no plugin
 // calls) and the schedule plan.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -58,6 +59,7 @@ void main() {
     >
     connects;
     DeviceIdentity? identity;
+    final reports = <Map<String, Object?>>[];
 
     setUp(() async {
       folder = Directory.systemTemp.createTempSync('backup_background');
@@ -66,6 +68,7 @@ void main() {
       nas = await FakeNas.start();
       connects = [];
       identity = testIdentity();
+      reports.clear();
     });
 
     tearDown(() async {
@@ -79,6 +82,7 @@ void main() {
       Future<DeviceIdentity?> Function()? loadIdentity,
     }) => runBackgroundBackup(
       taskName: taskName,
+      reportProgress: (progress) async => reports.add(progress),
       inputData:
           inputData ??
           backgroundInputData(
@@ -198,12 +202,120 @@ void main() {
       expect(await store.claimRunLock('app', 0), isTrue);
     });
   });
+
+  group('"Back up now" job', () {
+    late Directory folder;
+    late FakeMediaSource media;
+    late MemoryBackupStateStore store;
+    late FakeNas nas;
+    final reports = <Map<String, Object?>>[];
+
+    setUp(() async {
+      folder = Directory.systemTemp.createTempSync('backup_manual');
+      media = FakeMediaSource(folder);
+      store = MemoryBackupStateStore();
+      nas = await FakeNas.start();
+      reports.clear();
+    });
+
+    tearDown(() async {
+      await nas.close();
+      folder.deleteSync(recursive: true);
+    });
+
+    Future<({BackgroundOutcome outcome, BackupRunReport? report})> runManual({
+      String taskName = manualBackupTaskName,
+    }) => runBackgroundBackup(
+      taskName: taskName,
+      inputData: backgroundInputData(
+        clientSoftware: 'haotrannas-mobile 0.1.0',
+        deviceName: 'Android phone',
+      ),
+      loadIdentity: () async => testIdentity(),
+      stateStore: store,
+      mediaSource: media,
+      reportProgress: (progress) async => reports.add(progress),
+      connectPaired: (paired, {required clientSoftware, required deviceName}) =>
+          nas.connect(),
+    );
+
+    test(
+      'runs even with automatic backup off; reports, ends with done',
+      () async {
+        await store.writeValue(
+          settingsValueName,
+          encodeSettings(const BackupSettings(isBackupOn: false)),
+        );
+        media.put('a', [1, 2, 3]);
+
+        final result = await runManual();
+
+        expect(result.outcome, BackgroundOutcome.ran);
+        expect(result.report!.filesUploaded, 1);
+        expect(reports, isNotEmpty);
+        expect(reports.first['state'], 'running');
+        expect(reports.last['state'], 'done');
+        final saved = decodeRunSummary(await store.readValue(lastRunValueName));
+        expect(saved!.filesUploaded, 1);
+      },
+    );
+
+    test('the automatic job reports nothing', () async {
+      media.put('a', [1]);
+      await runManual(taskName: backupTaskName);
+      expect(reports, isEmpty);
+    });
+
+    test('busy: done with the reason', () async {
+      expect(
+        await store.claimRunLock('app', DateTime.now().millisecondsSinceEpoch),
+        isTrue,
+      );
+
+      final result = await runManual();
+
+      expect(result.outcome, BackgroundOutcome.busy);
+      expect(reports.single['state'], 'done');
+      expect(reports.single['problem'], contains('already running'));
+    });
+
+    test('stop_requested stops the job', () async {
+      media.put('a', [1]);
+      final gate = media.accessGate = Completer<void>();
+      final running = runBackgroundBackup(
+        taskName: manualBackupTaskName,
+        inputData: backgroundInputData(
+          clientSoftware: 'haotrannas-mobile 0.1.0',
+          deviceName: 'Android phone',
+        ),
+        loadIdentity: () async => testIdentity(),
+        stateStore: store,
+        mediaSource: media,
+        reportProgress: (progress) async => reports.add(progress),
+        connectPaired: (
+          paired, {
+          required clientSoftware,
+          required deviceName,
+        }) => nas.connect(),
+        stopCheckEvery: const Duration(milliseconds: 5),
+      );
+      await store.writeValue(stopRequestedValueName, stopRequestedYes);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      gate.complete();
+
+      final result = await running;
+
+      expect(result.report!.stopReason, BackupStopReason.cancelled);
+      expect(nas.committedPaths(), isEmpty);
+      expect(reports.last['state'], 'done');
+    });
+  });
 }
 
 class _ThrowingMediaSource extends FakeMediaSource {
   _ThrowingMediaSource(FakeMediaSource base) : super(base.folder);
 
   @override
-  Stream<Never> listItems({DateTime? changedSince}) =>
+  Stream<Never> listItems({Set<String>? folderIds}) =>
       Stream.error(Exception('scan failed'));
 }
