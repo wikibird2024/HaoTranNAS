@@ -7,15 +7,15 @@
 //! over plain TCP on loopback. M1/M2: uploads (`FileOffer`, `ChunkData`, `Commit`)
 //! and the offline `restore`. M3: `run` in TLS mode (mutual TLS, pairing),
 //! and `pair` / `devices` talking to the running server over the admin socket.
+//! M6: the scrub and cleanup jobs, and `scrub-now` / `cleanup-now` /
+//! `scrub-report` over the admin socket.
 
 mod admin;
 // Storage pieces used by `init`, dev mode and uploads now; the rest of their
 // API is wired in by M5 (browse) and M6 (cleanup).
 #[allow(dead_code, reason = "full API wired in by M5/M6")]
 mod catalog;
-#[allow(dead_code, reason = "sweep_tmp is wired in by the cleanup job (M6)")]
 mod chunk_store;
-#[allow(dead_code, reason = "scrub/cleanup intervals wired in by M6")]
 mod config;
 mod data_folder;
 mod handlers;
@@ -45,10 +45,14 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
 
-use crate::admin::{AdminContext, AdminSocket, send_admin_command};
+use crate::admin::{
+    AdminContext, AdminSocket, send_admin_command, send_admin_command_with_progress,
+};
 use crate::config::ServerConfig;
 use crate::data_folder::{DEV_DEVICE_ID, DataFolder};
 use crate::handlers::hello::ServerIdentity;
+use crate::handlers::upload::UploadStorage;
+use crate::jobs::{BackgroundJobs, JobSettings};
 use crate::listener::{ConnectionLimit, ConnectionMode, is_dev_plain_address_allowed, serve};
 use crate::pairing::PairingService;
 use crate::restore::{RestoreRequest, restore_file};
@@ -57,8 +61,6 @@ use crate::tls_identity::TlsIdentity;
 
 /// Exit code for a failure (bad config, folder not initialized, bind failed).
 const FAILURE_EXIT_CODE: u8 = 1;
-/// Exit code for a command or mode that exists but does nothing yet.
-const NOT_IMPLEMENTED_EXIT_CODE: u8 = 2;
 /// Time the sessions get to send `Close SERVER_SHUTDOWN` and end.
 const SHUTDOWN_GRACE_MS: u64 = 2_000;
 
@@ -82,8 +84,20 @@ enum Command {
     Devices(DevicesArgs),
     /// Copy one backed-up file out of the store (offline).
     Restore(RestoreArgs),
-    /// Re-hash every stored chunk now and report bad ones.
-    ScrubNow,
+    /// Re-hash every stored chunk now and report bad ones (asks the running
+    /// server; prints progress on stderr, the summary on stdout).
+    ScrubNow(JobCommandArgs),
+    /// Print the last finished scrub's summary (asks the running server).
+    ScrubReport(JobCommandArgs),
+    /// Delete expired uploads, old temp files, unused chunks and orphan
+    /// chunk files now (asks the running server).
+    CleanupNow(JobCommandArgs),
+}
+
+#[derive(Debug, Args)]
+struct JobCommandArgs {
+    #[command(flatten)]
+    config: ConfigArgs,
 }
 
 /// Where the settings come from: the config file, then flags on top.
@@ -122,6 +136,14 @@ struct RunArgs {
     /// Test only, TLS mode: pairing code lifetime instead of 120 000 ms.
     #[arg(long, hide = true, conflicts_with = "dev_plain")]
     pairing_code_ttl_ms: Option<u64>,
+    /// Test only: cleanup deletes uploads older than this instead of
+    /// `upload_expiry_hours`.
+    #[arg(long, hide = true)]
+    upload_expiry_ms: Option<u64>,
+    /// Test only: cleanup deletes unused chunks and orphan chunk files older
+    /// than this instead of 24 h (D-020).
+    #[arg(long, hide = true)]
+    unused_chunk_grace_ms: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -161,20 +183,6 @@ struct RestoreArgs {
     force: bool,
 }
 
-impl Command {
-    /// The name typed on the command line.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Init(_) => "init",
-            Self::Run(_) => "run",
-            Self::Pair(_) => "pair",
-            Self::Devices(_) => "devices",
-            Self::Restore(_) => "restore",
-            Self::ScrubNow => "scrub-now",
-        }
-    }
-}
-
 /// Log filter when `RUST_LOG` is not set. rustls warns once per connection
 /// when a client sends an IP literal as SNI (dart:io does); rustls ignores
 /// the name and so does our pin check, so only its errors are shown.
@@ -196,10 +204,9 @@ fn main() -> ExitCode {
         Command::Restore(args) => run_restore(&args),
         Command::Pair(args) => run_pair(&args),
         Command::Devices(args) => run_devices(&args),
-        other @ Command::ScrubNow => {
-            eprintln!("haotrannas-server {}: not implemented yet", other.name());
-            Ok(ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE))
-        }
+        Command::ScrubNow(args) => run_job_command(&args, "scrub-now"),
+        Command::ScrubReport(args) => run_job_command(&args, "scrub-report"),
+        Command::CleanupNow(args) => run_job_command(&args, "cleanup-now"),
     };
     outcome.unwrap_or_else(|error| {
         eprintln!("haotrannas-server: {error:#}");
@@ -289,6 +296,23 @@ fn run_devices(args: &DevicesArgs) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `scrub-now`, `scrub-report`, `cleanup-now`: asks the running server and
+/// prints its summary line (`scrub chunks_checked ...`). There is no
+/// offline mode: only the running server writes the catalog (D-020), so a
+/// stopped server is started first.
+fn run_job_command(args: &JobCommandArgs, command: &str) -> anyhow::Result<ExitCode> {
+    let config = load_config(&args.config)?;
+    let lines = send_admin_command_with_progress(&config.data_directory, command, |progress| {
+        eprintln!("scrub: {progress} chunks checked");
+    })?;
+    let reply = lines.last().map_or("", String::as_str);
+    let Some(summary) = reply.strip_prefix("ok ") else {
+        bail!("unexpected reply from the server: {reply}");
+    };
+    println!("{summary}");
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `run`: serve until SIGINT / SIGTERM.
 fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
     let mut config = load_config(&args.config)?;
@@ -328,6 +352,7 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
         None
     };
     let (upload_storage, catalog_writer_thread) = data_folder.open_upload_storage()?;
+    let jobs = background_jobs(args, &config, &upload_storage);
 
     let (connection_mode, pairing) = match (&tls_identity, dev_device_id) {
         (Some(tls_identity), _) => {
@@ -354,6 +379,7 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
         pairing: pairing.clone(),
         catalog_reader: upload_storage.catalog_reader.clone(),
         catalog_writer: upload_storage.catalog_writer.clone(),
+        jobs: Arc::clone(&jobs),
     };
     let settings = SessionSettings {
         server_identity: ServerIdentity::new(config.server_name.clone()),
@@ -379,6 +405,7 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
         connection_mode,
         settings,
         admin_context,
+        jobs,
         mdns_setup,
     ));
     // Drops every task (and with them every catalog writer handle); a
@@ -391,6 +418,28 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
         bail!("the catalog writer thread panicked");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Scrub and cleanup on the same storage, with the test-only flags applied.
+fn background_jobs(
+    args: &RunArgs,
+    config: &ServerConfig,
+    upload_storage: &UploadStorage,
+) -> Arc<BackgroundJobs> {
+    let mut job_settings = JobSettings::from_config(config);
+    if let Some(upload_expiry_ms) = args.upload_expiry_ms {
+        job_settings.upload_expiry_ms = upload_expiry_ms;
+    }
+    if let Some(unused_chunk_grace_ms) = args.unused_chunk_grace_ms {
+        job_settings.unused_chunk_grace_ms = unused_chunk_grace_ms;
+    }
+    Arc::new(BackgroundJobs::new(
+        Arc::clone(&upload_storage.chunk_store),
+        upload_storage.catalog_writer.clone(),
+        upload_storage.catalog_reader.clone(),
+        config.data_directory.clone(),
+        job_settings,
+    ))
 }
 
 /// One log line saying which mode the server runs in and who may pair.
@@ -424,6 +473,7 @@ async fn serve_until_stopped(
     connection_mode: ConnectionMode,
     settings: SessionSettings,
     admin_context: AdminContext,
+    jobs: Arc<BackgroundJobs>,
     mdns_setup: Option<(ServerConfig, CertFingerprint)>,
 ) -> anyhow::Result<()> {
     // Signal handlers first, so a stop right after start is still clean.
@@ -458,14 +508,21 @@ async fn serve_until_stopped(
         shutdown_receiver,
         SHUTDOWN_GRACE_MS,
     ));
+    // Scrub and cleanup, after the listener is bound (both run modes).
+    let job_tasks = jobs.start();
 
     tokio::select! {
         _ = interrupt.recv() => tracing::info!("SIGINT: stopping"),
         _ = terminate.recv() => tracing::info!("SIGTERM: stopping"),
     }
     shutdown_sender.send_replace(true);
+    // A running scrub stops at its next page; its report is not saved.
+    jobs.stop();
     listener_task.await.context("listener task failed")?;
     admin_task.await.context("admin task failed")?;
+    for job_task in job_tasks {
+        job_task.await.context("background job task failed")?;
+    }
     tracing::info!("stopped");
     Ok(())
 }

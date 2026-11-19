@@ -52,6 +52,17 @@ pub struct DirectoryPage {
     pub has_more: bool,
 }
 
+/// One `chunks` row, as scrub walks them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkRecord {
+    /// The chunk's SHA-256 (its name).
+    pub hash: ChunkHash,
+    /// Size recorded when it was stored.
+    pub size_bytes: u64,
+    /// Status in the catalog.
+    pub status: ChunkStatus,
+}
+
 /// Opens read-only connections to the catalog. Clone it freely.
 #[derive(Debug, Clone)]
 pub struct CatalogReader {
@@ -228,6 +239,52 @@ impl CatalogReader {
                 |row| row.get(0),
             )
             .optional()?)
+    }
+
+    /// Up to `max_count` chunk rows with a hash greater than `after_hash`
+    /// (from the start when `None`), in hash order. Scrub walks the whole
+    /// table with it, one small page at a time.
+    pub fn chunk_page(
+        &self,
+        after_hash: Option<&ChunkHash>,
+        max_count: usize,
+    ) -> Result<Vec<ChunkRecord>, CatalogError> {
+        let connection = self.open_connection()?;
+        let mut select = connection.prepare(
+            "SELECT hash, size_bytes, status FROM chunks WHERE hash > ?1 ORDER BY hash LIMIT ?2",
+        )?;
+        // Every hash is 32 bytes, so the empty BLOB sorts before all of them.
+        let after_bytes: &[u8] = after_hash.map_or(&[], |hash| &hash.0);
+        let max_sql_count = sql_integer(u64::try_from(max_count).unwrap_or(u64::MAX))?;
+        let records = select
+            .query_map(params![after_bytes, max_sql_count], |row| {
+                Ok(ChunkRecord {
+                    hash: chunk_hash_from_row(row, 0)?,
+                    size_bytes: u64_from_row(row, 1)?,
+                    status: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(records)
+    }
+
+    /// The hashes from `hashes` that have no `chunks` row (one connection
+    /// for the whole list). Cleanup uses it to find orphan chunk files.
+    pub fn hashes_not_in_catalog(
+        &self,
+        hashes: &[ChunkHash],
+    ) -> Result<Vec<ChunkHash>, CatalogError> {
+        let connection = self.open_connection()?;
+        let mut has_row =
+            connection.prepare("SELECT EXISTS (SELECT 1 FROM chunks WHERE hash = ?1)")?;
+        let mut unknown_hashes = Vec::new();
+        for hash in hashes {
+            let is_known: bool = has_row.query_row([hash.0], |row| row.get(0))?;
+            if !is_known {
+                unknown_hashes.push(*hash);
+            }
+        }
+        Ok(unknown_hashes)
     }
 
     /// The chunk's status, or `None` when it is not in the catalog.

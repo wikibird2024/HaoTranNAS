@@ -40,12 +40,19 @@ name and so does the pin check; TLS behaviour is unchanged. Stop with Ctrl-C or 
 | `pair [--config F] [--data-dir D]` | 🟢 M3 | Asks the running server (admin socket) for a pairing code; prints one line and exits: `code 482913 · server id 3F9A-C21B-77E0 · valid 120 s`. Exit 1 if no server runs or it is in dev mode |
 | `devices [--config F] [--data-dir D] [--revoke N]` | 🟢 M3 | Lists devices, one line each: `<id> <name> paired <ms> [revoked <ms>]` (`no paired devices` when empty). `--revoke N`: device N's certificate is refused from now on; its backups stay restorable (D-025). Prints `revoked device N; its backups stay restorable` |
 | `restore [--config F] [--data-dir D] [--device-id N] --path P [--version-id V] --output F [--force]` | 🟢 M1 | Offline (no running server needed; safe next to one). Device 1 and the latest version by default. Re-hashes every chunk and the whole file, writes a temp file next to F, fsyncs, then renames. Prints `restored <path> version <id> (<size> bytes, sha256 <hex>)`. Refuses to overwrite F without `--force`; a damaged or missing chunk → exit 1, no file left behind |
-| `scrub-now` | ⚪ M6 | "not implemented yet", exit 2 |
+| `scrub-now [--config F] [--data-dir D]` | 🟢 M6 | Asks the running server to re-hash every chunk now. `scrub: <n> chunks checked` on stderr after each 256 chunks, then one stdout line `scrub chunks_checked N bytes_checked N bad_found N missing N repaired N started_at_ms N duration_ms N`. Exit 1 if no server runs or a scrub is already running |
+| `scrub-report [--config F] [--data-dir D]` | 🟢 M6 | The last finished scrub, same line (from `D/scrub-report.json`). Exit 1 before the first scrub |
+| `cleanup-now [--config F] [--data-dir D]` | 🟢 M6 | Runs cleanup now, orphan pass included: `cleanup expired_uploads N tmp_files N unused_chunks N orphan_files N orphan_pass yes duration_ms N` |
 
 Settings: `--config F` reads `F` (missing file → defaults); without it the
 built-in defaults are used. `--data-dir` and `--listen` override the file.
 
-Exit codes: 0 ok, 1 failure (message on stderr), 2 not implemented yet.
+Exit codes: 0 ok, 1 failure (message on stderr). `scrub-now` exits 0 even
+when it finds damage: read `bad_found` / `missing` (nas/RUNBOOK.md).
+
+No offline scrub or cleanup: only the running server writes the catalog
+(one writer, D-020), so start the server first. `restore` stays offline
+because it only reads.
 
 ### TLS mode (`run` without `--dev-plain`)
 
@@ -130,6 +137,28 @@ a 20 000-file folder takes ~140 ms in a debug build (test
 `list_directory_stays_fast_with_20k_files_in_one_folder`); a brute-force
 model test covers the ordering corner cases.
 
+### Background jobs (`src/jobs/`)
+
+Both start after the listener is bound, in TLS and dev-plain mode, and
+wait one full interval before their first run (a restart does not start a
+week-long scrub). On SIGTERM they stop; a running scrub stops at its next
+page of 256 chunks and saves no report. One scrub and one cleanup at a time.
+
+| Job | When | What |
+|---|---|---|
+| Scrub | every `scrub_interval_hours` (168), or `scrub-now` | Walks `chunks` in hash order, 256 rows a page. Re-hashes each file (`spawn_blocking`), at most 64 MiB/s (no catch-up bursts). Damaged (or EIO) → marked bad, `bad_found`; no file → marked bad, `missing`; marked bad but intact now (ZFS repair, re-upload) → marked ok, `repaired`. Saves `D/scrub-report.json` (temp file, fsync, rename) and logs it (warning when `bad_found` or `missing` > 0) |
+| Cleanup | every `cleanup_interval_minutes` (60), or `cleanup-now` | 1 uploads older than `upload_expiry_hours` (24). 2 `tmp/` files older than 1 h. 3 unused chunks (no `version_chunks`, no `upload_chunks` row) created more than 24 h ago: rows deleted, commit, then files deleted, all in ONE writer job per 500 (D-020). 4 orphan pass, at most daily: chunk files older than 24 h with no `chunks` row (a crash between step 3's commit and its file delete), re-checked inside the writer |
+
+Why cleanup cannot race an upload: a `FileOffer` is a writer job too. If it
+runs first, its `upload_chunks` rows keep the chunk; if it runs after, the
+chunk has no row, so it is listed missing and the client sends it again.
+`ReadChunk` of a deleted chunk answers `NOT_FOUND`.
+
+| Hidden test flag on `run` | Effect |
+|---|---|
+| `--upload-expiry-ms N` | Uploads expire after N ms instead of `upload_expiry_hours` |
+| `--unused-chunk-grace-ms N` | Unused chunks and orphan files are deleted after N ms instead of 24 h |
+
 ### Admin socket
 
 `<data_dir>/admin.sock`, mode 0600, removed on stop; a stale file from a
@@ -138,7 +167,7 @@ refused. Unix socket paths must stay under 108 bytes, so keep the data
 folder path short. Try it with `socat - UNIX-CONNECT:/tmp/htn-data/admin.sock`.
 
 Line protocol: one command per line. Every reply is one line, except
-`devices`. Failures are `error <text>`.
+`devices` and `scrub-now`. Failures are `error <text>`.
 
 | Command | Reply |
 |---|---|
@@ -146,6 +175,9 @@ Line protocol: one command per line. Every reply is one line, except
 | `pair` | `code <6 digits> server-id <XXXX-XXXX-XXXX> valid <s> s` (TLS mode only) |
 | `devices` | `<id> <name> paired <ms> [revoked <ms>]` per device (control characters in names shown as `?`), then `ok <n> devices` |
 | `revoke <id>` | `ok revoked device <id>` · `error no device <id>` · `error device <id> was already revoked at <ms>` |
+| `scrub-now` | `progress <chunks checked>` after each page of 256, then `ok scrub <summary>` · `error scrub: a scrub is already running`. A big store takes hours (64 MiB/s); a client that hangs up does not stop the scrub |
+| `scrub-report` | `ok scrub <summary>` of the last finished scrub · `error no scrub has finished yet (run scrub-now)` |
+| `cleanup-now` | `ok cleanup <summary>` · `error cleanup: a cleanup is already running` |
 
 The `pair` / `devices` subcommands send one command, half-close, and read
 the reply to the end.

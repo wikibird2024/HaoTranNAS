@@ -250,6 +250,38 @@ Redo the backup after any change in `tls/`. Restore: `gpg -d <file> | sudo tar -
 Errors or `DEGRADED` → look at the `READ / WRITE / CKSUM` columns. A disk with
 growing counts → replace it (next section). Check `smartctl -a` on it too.
 
+### Server scrub and cleanup
+
+The server checks its own chunks too: ZFS sees disk blocks, the server
+scrub sees whole chunk files. It runs weekly (`scrub_interval_hours`) and
+reads at most 64 MiB/s. Cleanup runs hourly on its own; nothing to do.
+
+| Task | Command |
+|---|---|
+| Scrub now (waits; progress on stderr) | `sudo -u haotrannas /usr/local/bin/haotrannas-server scrub-now --config /etc/haotrannas/config.toml` |
+| Last scrub result | `sudo -u haotrannas /usr/local/bin/haotrannas-server scrub-report --config /etc/haotrannas/config.toml` or `sudo cat /srv/haotrannas/scrub-report.json` |
+| Cleanup now | `sudo -u haotrannas /usr/local/bin/haotrannas-server cleanup-now --config /etc/haotrannas/config.toml` |
+
+`scrub-report.json`:
+
+| Field | Meaning | Good |
+|---|---|---|
+| `chunks_checked`, `bytes_checked` | How much was read | About the store size |
+| `bad_found` | Chunk files whose bytes no longer match their hash (bit rot) | 0 |
+| `missing` | Chunks in the catalog with no file | 0 |
+| `repaired` | Chunks marked bad earlier that are fine now | Any |
+| `started_at_ms`, `duration_ms` | When, and how long | Within a week |
+
+`bad_found` or `missing` > 0 → the chunk is marked bad; no backup is lost
+while a phone still has the file:
+
+| # | Step |
+|---|---|
+| 1 | `zpool status -v tank`: errors there → fix the pool first (section 10 if a disk fails), then `sudo zpool scrub tank`. A ZFS repair makes the next server scrub count the chunk as `repaired` |
+| 2 | Run "verify backup" on the phone (or just the next backup): the phone re-offers its files, the server lists the bad chunks missing, the phone re-sends them |
+| 3 | `scrub-now` again → `bad_found 0 missing 0` |
+| 4 | Still bad, and no phone has the file any more → that file version cannot be restored; `restore` / download say "damaged" |
+
 ## 10. Replace a disk
 
 ```

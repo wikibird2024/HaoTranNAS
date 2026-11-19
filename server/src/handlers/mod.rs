@@ -2,7 +2,7 @@
 //! request and the session's device, uses the chunk store and catalog, and
 //! returns the reply message.
 //!
-//! `hello` (M0), `upload` (M1/M2), `pair` (M3); browse and download come in M5.
+//! `hello` (M0), `upload` (M1/M2), `pair` (M3), `browse` and `download` (M5).
 
 pub mod browse;
 pub mod download;

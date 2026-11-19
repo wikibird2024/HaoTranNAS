@@ -194,6 +194,62 @@ impl ChunkStore {
         Ok(removed_count)
     }
 
+    /// Deletes the chunk file. Returns false when there was no file. Only
+    /// cleanup calls it, for a chunk whose catalog row is already gone. The
+    /// folder is not fsynced: a delete lost in a crash leaves an orphan file,
+    /// which the next orphan pass removes.
+    pub fn remove(&self, hash: &ChunkHash) -> Result<bool, StoreError> {
+        match fs::remove_file(self.path_for(hash)) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Calls `visit` with the hash of every chunk file last changed at
+    /// least `older_than` ago. Files whose name is not a hash, or that are
+    /// not at the path their name gives, are skipped.
+    pub fn for_each_chunk_file_older_than(
+        &self,
+        older_than: Duration,
+        visit: &mut dyn FnMut(ChunkHash),
+    ) -> Result<(), StoreError> {
+        let chunks_directory = self.root_directory.join(CHUNKS_DIRECTORY_NAME);
+        for first_level in fs::read_dir(chunks_directory)? {
+            let first_level = first_level?;
+            if !first_level.file_type()?.is_dir() {
+                continue;
+            }
+            for second_level in fs::read_dir(first_level.path())? {
+                let second_level = second_level?;
+                if !second_level.file_type()?.is_dir() {
+                    continue;
+                }
+                for entry in fs::read_dir(second_level.path())? {
+                    let entry = entry?;
+                    let Some(hash) = chunk_hash_from_file_name(&entry.file_name()) else {
+                        continue;
+                    };
+                    if self.path_for(&hash) != entry.path() {
+                        continue;
+                    }
+                    let metadata = match entry.metadata() {
+                        Ok(metadata) => metadata,
+                        // Removed since the folder was read.
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                        Err(error) => return Err(error.into()),
+                    };
+                    // A modified time in the future counts as age zero.
+                    let age = metadata.modified()?.elapsed().unwrap_or(Duration::ZERO);
+                    if metadata.is_file() && age >= older_than {
+                        visit(hash);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `tmp/` under the root.
     fn tmp_directory(&self) -> PathBuf {
         self.root_directory.join(TMP_DIRECTORY_NAME)
@@ -286,6 +342,20 @@ impl Drop for TmpFileGuard<'_> {
 /// SHA-256 of `data`.
 fn sha256(data: &[u8]) -> [u8; 32] {
     Sha256::digest(data).into()
+}
+
+/// The hash a chunk file name stands for: 64 lower-case hex digits.
+fn chunk_hash_from_file_name(file_name: &std::ffi::OsStr) -> Option<ChunkHash> {
+    let name = file_name.to_str()?;
+    let is_lower_hex = name
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if name.len() != 64 || !is_lower_hex {
+        return None;
+    }
+    let mut hash = [0_u8; 32];
+    hex::decode_to_slice(name, &mut hash).ok()?;
+    Some(ChunkHash(hash))
 }
 
 /// `HashMismatch` unless `data` hashes to `hash`.
@@ -520,5 +590,50 @@ mod tests {
         assert!(matches!(error, StoreError::DiskFull));
         let error = StoreError::from(io::Error::from(io::ErrorKind::PermissionDenied));
         assert!(matches!(error, StoreError::Io(_)));
+    }
+
+    #[test]
+    fn remove_deletes_the_file_once() {
+        let (_root, store) = open_test_store();
+        let hash = hash_of(b"old chunk");
+        store.put(&hash, b"old chunk").unwrap();
+        assert!(store.remove(&hash).unwrap());
+        assert!(!store.has(&hash).unwrap());
+        assert!(!store.remove(&hash).unwrap());
+    }
+
+    #[test]
+    fn walk_lists_old_chunk_files_and_skips_strangers() {
+        let (root, store) = open_test_store();
+        let (old_hash, new_hash) = (hash_of(b"old"), hash_of(b"new"));
+        store.put(&old_hash, b"old").unwrap();
+        store.put(&new_hash, b"new").unwrap();
+        let two_hours_ago = std::time::SystemTime::now() - Duration::from_secs(7200);
+        File::options()
+            .write(true)
+            .open(store.path_for(&old_hash))
+            .unwrap()
+            .set_modified(two_hours_ago)
+            .unwrap();
+        // A file whose name is not a hash, and a hash name at the wrong place.
+        let leaf_directory = store.path_for(&old_hash).parent().unwrap().to_owned();
+        fs::write(leaf_directory.join("notes.txt"), b"x").unwrap();
+        fs::write(
+            root.path().join("chunks").join(hex::encode(new_hash.0)),
+            b"new",
+        )
+        .unwrap();
+
+        let mut seen = Vec::new();
+        store
+            .for_each_chunk_file_older_than(Duration::from_secs(3600), &mut |hash| seen.push(hash))
+            .unwrap();
+        assert_eq!(seen, vec![old_hash]);
+
+        let mut seen_count = 0;
+        store
+            .for_each_chunk_file_older_than(Duration::ZERO, &mut |_| seen_count += 1)
+            .unwrap();
+        assert_eq!(seen_count, 2);
     }
 }
