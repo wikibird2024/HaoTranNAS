@@ -167,6 +167,18 @@ Release signing uses the repo secrets `ANDROID_KEYSTORE_BASE64`,
 Without them the APK is signed with a throwaway debug key and CI shows a
 warning (that APK will not install over an earlier one).
 
+The fixed key (made 2026-11-19, RSA 4096, alias `haotrannas`, CN=Hao Tran)
+lives in `/mnt/storage/HaoTran/keys/` (the `.jks` and a `.txt` with its
+password), never in the repo. Back both up: losing them means one more
+uninstall + pairing and a new key. Every APK's signer must be:
+
+```
+SHA-256 30:1D:33:B2:E1:FB:5B:8B:03:40:A9:53:D6:0F:06:3F:59:8C:31:2C:68:09:0E:1D:72:74:8D:13:DC:3B:A3:1F
+```
+
+CI prints it as the "APK signer SHA-256" notice; by hand:
+`apksigner verify --print-certs app-release.apk`.
+
 App icon (two NAS drives + a check, white on deep blue) comes from
 `tool/make_launcher_icon.py`: one shape that writes the adaptive vector icon
 (Android 8+, incl. the themed one-color icon) and the PNGs for Android 7.
