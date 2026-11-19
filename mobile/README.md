@@ -158,7 +158,7 @@ path become two versions of one path.
 
 ## Build
 
-APKs are built only in GitHub CI (`.github/workflows/mobile.yml`), not on
+APKs are built only in GitHub CI (`.github/workflows/flutter.yml`), not on
 the dev machine. Each CI run uploads the artifact `haotrannas-mobile-apk`.
 versionCode = CI run number.
 

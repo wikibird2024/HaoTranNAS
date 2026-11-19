@@ -21,6 +21,8 @@ Future<void> main() async {
     ProviderScope(
       overrides: [
         identityStoreProvider.overrideWithValue(identityStore),
+        clientSoftwareProvider.overrideWithValue(appClientSoftware),
+        serverFinderProvider.overrideWithValue(findServersOnWifi),
         restoreFolderProvider.overrideWithValue(
           Directory('${documents.path}/restored'),
         ),

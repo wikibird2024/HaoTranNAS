@@ -31,6 +31,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:haotrannas_client/app/client_providers.dart'
+    show connectPairedOrThrow;
 import 'package:haotrannas_client/backup/backup_controller.dart';
 import 'package:haotrannas_client/backup/backup_runner.dart';
 import 'package:haotrannas_client/backup/backup_state_store.dart';
@@ -237,27 +239,6 @@ Future<bool> _runFromPlugin(
   // Always "done": the 15-minute period is the retry; WorkManager's own
   // retry would only wake the phone again for the same offline server.
   return true;
-}
-
-/// [AddressBook.connectPaired] as a [NasConnector]: the connection, or
-/// [BackupConnectFailed] with the address book's message.
-Future<NasConnection> connectPairedOrThrow(
-  AddressBook addressBook,
-  DeviceIdentity identity, {
-  List<DiscoveredServer> discovered = const [],
-}) async {
-  final result = await addressBook.connectPaired(
-    identity,
-    discovered: discovered,
-  );
-  return switch (result) {
-    PairedConnected(:final connection) => connection,
-    PairedConnectFailed(:final kind, :final message) =>
-      throw BackupConnectFailed(
-        message,
-        isMaybeNotPaired: kind == PairedConnectFailureKind.maybeNotPaired,
-      ),
-  };
 }
 
 typedef PairedConnector = Future<NasConnection> Function(

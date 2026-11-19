@@ -23,9 +23,10 @@ import 'dart:io';
 import '../protocol/limits.dart';
 import '../protocol/path_rules.dart';
 
-enum MediaKind { image, video }
+/// What an item is; `file` = any file from a PC folder.
+enum MediaKind { image, video, file }
 
-/// One photo or video on the phone.
+/// One photo or video on the phone, or one file in a PC folder.
 final class MediaItem {
   const MediaItem({
     required this.id,
@@ -35,7 +36,8 @@ final class MediaItem {
     required this.kind,
   });
 
-  /// Stable id from the phone's media database (Android `_id`).
+  /// Stable id: the phone's media database `_id`, or the file's
+  /// absolute path on a PC.
   final String id;
 
   /// The remote path to back it up as; passes the path rules.
@@ -82,7 +84,8 @@ final class MediaAccess {
   };
 }
 
-/// One album (Android bucket) of photos and videos.
+/// One album (Android bucket) of photos and videos, or one chosen PC
+/// folder (id = its absolute path).
 final class MediaFolder {
   const MediaFolder({
     required this.id,

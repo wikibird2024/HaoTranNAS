@@ -24,57 +24,7 @@ import 'package:haotrannas_client/protocol/limits.dart';
 
 import '../app/providers.dart';
 
-/// One open, unpaired connection that takes codes. [PairingSession]
-/// through [SessionPairingAttempt]; tests use a fake.
-abstract interface class PairingAttempt {
-  /// `3F9A-C21B-77E0`: the user compares it with the NAS.
-  String get serverShortId;
-
-  /// The connection still takes another code.
-  bool get isOpen;
-
-  /// See `PairingSession.submitCode`; never throws.
-  Future<PairingResult> submitCode(String code);
-
-  Future<void> close();
-}
-
-/// Opens a [PairingAttempt]; throws `PairingFailed` when no server
-/// answers or TLS fails.
-typedef PairingOpener = Future<PairingAttempt> Function(ServerAddress address);
-
-final class SessionPairingAttempt implements PairingAttempt {
-  SessionPairingAttempt(this.session);
-
-  final PairingSession session;
-
-  @override
-  String get serverShortId => session.serverShortId;
-
-  @override
-  bool get isOpen => session.isOpen;
-
-  @override
-  Future<PairingResult> submitCode(String code) => session.submitCode(code);
-
-  @override
-  Future<void> close() => session.close();
-}
-
 enum _PairingStep { findServer, connecting, compareId, enterCode, paired }
-
-/// A short title for each failure the user can act on.
-String pairingFailureTitle(PairingFailureKind kind) => switch (kind) {
-  PairingFailureKind.badCode => 'Wrong code',
-  PairingFailureKind.badCodeFormat => 'Check the code',
-  PairingFailureKind.notAllowedFromNetwork => 'Not allowed from this network',
-  PairingFailureKind.serverMismatch ||
-  PairingFailureKind.shortIdMismatch => 'Possible man-in-the-middle',
-  PairingFailureKind.pairingNotOpen => 'The NAS is not waiting for a phone',
-  PairingFailureKind.tooManyAttempts => 'Too many wrong codes',
-  PairingFailureKind.unreachable => 'NAS not found',
-  _ => 'Pairing failed',
-};
 
 class PairingScreen extends ConsumerStatefulWidget {
   const PairingScreen({

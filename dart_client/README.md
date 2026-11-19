@@ -4,7 +4,8 @@ Author: Hao Tran
 
 The HaoTranNAS client in Dart, used by the phone app (`mobile/`) and the PC
 app (`desktop/`) through a path dependency (decision D-040). It has no UI
-and no Android- or desktop-only plugin code.
+and no Android- or desktop-only plugin code (Riverpod state is shared;
+widgets are not).
 
 ```
  lib/
@@ -14,7 +15,8 @@ and no Android- or desktop-only plugin code.
    client/     connection, chunker, upload, download, pairing, identity, address book
    backup/     runner, SQLite state store, controller, MediaSource interface,
                BackupStatusSource types (what the screens see)
-   text/       numbers, sizes and dates as text for the screens
+   app/        Riverpod state both apps share: identity, connection, pairing, backup source
+   text/       numbers, sizes, dates and backup summaries as text for the screens
    testing/    fakes for the apps' tests (fake servers, fake media, test certs)
 ```
 

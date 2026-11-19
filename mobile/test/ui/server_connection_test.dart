@@ -80,7 +80,7 @@ void main() {
     final container = containerFor(null);
     await container.read(serverConnectionProvider.notifier).connect();
     final state = container.read(serverConnectionProvider);
-    expect((state as ServerOffline).problem, 'This phone is not paired.');
+    expect((state as ServerOffline).problem, 'This device is not paired.');
     expect(fakeTls.calls, isEmpty);
   });
 

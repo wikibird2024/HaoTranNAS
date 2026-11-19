@@ -15,7 +15,6 @@ import 'package:haotrannas_client/client/pairing.dart';
 import 'package:haotrannas_client/client/server_address.dart';
 import 'package:haotrannas_client/protocol/messages.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
-import 'package:haotrannas_mobile/ui/pairing_screen.dart';
 
 /// Fingerprint whose short id is `3F9A-C21B-77E0`.
 final testServerFingerprint = [

@@ -141,7 +141,8 @@ abstract interface class BackupStateStore {
   Future<void> close();
 }
 
-const _runLockName = 'run_lock';
+/// Name of the run lock in `app_values`.
+const runLockValueName = 'run_lock';
 
 /// The lock decision, shared by both stores. Pure.
 bool _canTakeLock(String? lockText, String owner, int nowMs) {
@@ -178,14 +179,14 @@ class MemoryBackupStateStore implements BackupStateStore {
 
   @override
   Future<bool> claimRunLock(String owner, int nowMs) async {
-    if (!_canTakeLock(values[_runLockName], owner, nowMs)) return false;
-    values[_runLockName] = _lockText(owner, nowMs);
+    if (!_canTakeLock(values[runLockValueName], owner, nowMs)) return false;
+    values[runLockValueName] = _lockText(owner, nowMs);
     return true;
   }
 
   @override
   Future<void> releaseRunLock(String owner) async {
-    if (_lockOwner(values[_runLockName]) == owner) values.remove(_runLockName);
+    if (_lockOwner(values[runLockValueName]) == owner) values.remove(runLockValueName);
   }
 
   @override
@@ -304,21 +305,21 @@ class SqfliteBackupStateStore implements BackupStateStore {
   @override
   Future<bool> claimRunLock(String owner, int nowMs) =>
       database.transaction((transaction) async {
-        final lockText = await _readValue(transaction, _runLockName);
+        final lockText = await _readValue(transaction, runLockValueName);
         if (!_canTakeLock(lockText, owner, nowMs)) return false;
-        await _writeValue(transaction, _runLockName, _lockText(owner, nowMs));
+        await _writeValue(transaction, runLockValueName, _lockText(owner, nowMs));
         return true;
       });
 
   @override
   Future<void> releaseRunLock(String owner) =>
       database.transaction((transaction) async {
-        final lockText = await _readValue(transaction, _runLockName);
+        final lockText = await _readValue(transaction, runLockValueName);
         if (_lockOwner(lockText) != owner) return;
         await transaction.delete(
           'app_values',
           where: 'name = ?',
-          whereArgs: [_runLockName],
+          whereArgs: [runLockValueName],
         );
       });
 

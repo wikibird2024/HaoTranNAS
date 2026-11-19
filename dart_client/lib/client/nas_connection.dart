@@ -524,7 +524,7 @@ class NasConnection {
   NasFailure _linkFailure(String text) => _helloOk == null
       ? NasFailure(
           NasFailureKind.closedBeforeHello,
-          '$text before HelloOk (maybe this phone is not paired)',
+          '$text before HelloOk (maybe this device is not paired)',
         )
       : NasFailure(NasFailureKind.linkClosed, text);
 

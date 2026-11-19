@@ -14,7 +14,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
-import 'package:haotrannas_client/text/formatting.dart';
+import 'package:haotrannas_client/text/backup_text.dart';
 
 import '../app/providers.dart';
 import 'folders_screen.dart';
@@ -110,48 +110,6 @@ class _ServerCard extends ConsumerWidget {
       ),
     );
   }
-}
-
-String _runSummaryText(BackupRunSummary run) {
-  final parts = [
-    '${run.filesUploaded} uploaded (${formatBytes(run.bytesUploaded)})',
-    '${run.filesAlreadyBackedUp} already there',
-    if (run.filesFailed > 0) '${run.filesFailed} failed',
-  ];
-  final problem = run.problem;
-  return '${formatDateTime(run.finishedAt)}: ${parts.join(', ')}'
-      '${problem == null ? '' : '\n$problem'}';
-}
-
-String _verifySummaryText(VerifySummary verify) {
-  final result = verify.filesWrong == 0
-      ? 'all ${verify.filesChecked} files OK'
-      : '${verify.filesWrong} of ${verify.filesChecked} files wrong or missing';
-  final problem = verify.problem;
-  return '${formatDateTime(verify.finishedAt)}: $result'
-      '${problem == null ? '' : '\n$problem'}';
-}
-
-/// The lines under the progress bar while a run goes on.
-List<String> liveProgressLines(
-  BackupActivity activity,
-  BackupLiveProgress? progress,
-  DateTime now,
-) {
-  if (progress == null) return const ['Getting ready…'];
-  final checkedText = activity == BackupActivity.verifying
-      ? '${formatCount(progress.itemsChecked)} of '
-            '${formatCount(progress.itemsTotal)} files checked'
-      : '${formatCount(progress.itemsChecked)} of '
-            '~${formatCount(progress.itemsTotal)} photos checked';
-  final speed = progress.bytesPerSecond(now);
-  return [
-    checkedText,
-    '${formatCount(progress.filesUploaded)} uploaded · '
-        '${formatBytes(progress.bytesUploaded)}'
-        '${speed > 0 ? ' · ${formatBytes(speed.round())}/s' : ''}',
-    if (progress.currentPath.isNotEmpty) 'Now: ${progress.currentPath}',
-  ];
 }
 
 class _BackupCard extends ConsumerWidget {
@@ -276,11 +234,11 @@ class _HistoryCard extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Last backup', style: textTheme.labelLarge),
-                Text(lastRun == null ? 'Never' : _runSummaryText(lastRun)),
+                Text(lastRun == null ? 'Never' : runSummaryText(lastRun)),
                 const SizedBox(height: 8),
                 Text('Last check', style: textTheme.labelLarge),
                 Text(
-                  lastVerify == null ? 'Never' : _verifySummaryText(lastVerify),
+                  lastVerify == null ? 'Never' : verifySummaryText(lastVerify),
                 ),
               ],
             ),
