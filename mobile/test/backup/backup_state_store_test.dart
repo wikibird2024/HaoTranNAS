@@ -116,6 +116,25 @@ void main() {
       ),
     );
 
+    test('the background job closing its store leaves the app\'s open '
+        '(phone bug 2026-11-19: database_closed)', () async {
+      final path = '${folder.path}/shared.db';
+      final app = await SqfliteBackupStateStore.open(
+        path,
+        factory: databaseFactoryFfi,
+      );
+      final job = await SqfliteBackupStateStore.open(
+        path,
+        factory: databaseFactoryFfi,
+      );
+      await job.writeValue('last_run', 'from job');
+      await job.close();
+
+      expect(await app.readValue('last_run'), 'from job');
+      await app.writeValue('stop_requested', 'no');
+      await app.close();
+    });
+
     test('data survives close and reopen; schema as specified', () async {
       final path = '${folder.path}/reopen.db';
       final first = await SqfliteBackupStateStore.open(

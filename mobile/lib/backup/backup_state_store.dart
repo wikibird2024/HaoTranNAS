@@ -225,6 +225,10 @@ class SqfliteBackupStateStore implements BackupStateStore {
     final database = await (factory ?? databaseFactory).openDatabase(
       path,
       options: OpenDatabaseOptions(
+        // Own connection: sqflite otherwise shares one handle per path in
+        // the whole process, and the background job's close() would close
+        // the app's store too (database_closed on the phone, 2026-11-19).
+        singleInstance: false,
         version: schemaVersion,
         onCreate: (database, version) async {
           await database.execute('''
