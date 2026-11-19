@@ -174,21 +174,20 @@ fn ping_before_hello_gets_unexpected_message() {
 }
 
 #[test]
-fn request_not_built_yet_gets_internal_and_the_connection_stays() {
+fn request_error_is_not_fatal_and_the_connection_stays() {
     let server = DevServer::start().unwrap();
     let mut client = RawClient::connect(server.address()).unwrap();
     say_hello(&mut client);
-    // Browse arrives in M5; upload requests are handled since M1.
-    client.send(&Message::ListDevices, 2).unwrap();
+    // Every request is built since M5; a non-fatal error keeps the connection.
+    let read_file = Message::ReadFile {
+        device_id: 0,
+        path: "missing.txt".to_owned(),
+        version_id: 0,
+    };
+    client.send(&read_file, 2).unwrap();
     let (request_id, reply) = client.expect_frame().unwrap();
     assert_eq!(request_id, 2);
-    assert_eq!(
-        reply,
-        Message::Error {
-            code: ErrorCode::Internal.code(),
-            message: "not implemented yet (milestone M1+)".to_owned(),
-        }
-    );
+    assert_error(&reply, ErrorCode::NotFound);
     client.send(&Message::Ping, 3).unwrap();
     assert_eq!(client.expect_frame().unwrap(), (3, Message::Pong));
 }

@@ -33,6 +33,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
+use crate::handlers::browse::{ListDirRequest, ReadError, handle_list_devices, handle_list_dir};
+use crate::handlers::download::{ReadFileRequest, handle_read_chunk, handle_read_file};
 use crate::handlers::hello::{ServerIdentity, handle_hello};
 use crate::handlers::pair::{PairAttempt, PairStep, handle_pair_request};
 use crate::handlers::upload::{
@@ -328,11 +330,70 @@ async fn handle_frame(
                 }),
             }
         }
+        Message::ListDevices
+        | Message::ListDir { .. }
+        | Message::ReadFile { .. }
+        | Message::ReadChunk { .. } => {
+            // Ready only (core state machine), which always has a device.
+            let PeerIdentity::Device(device_id) = peer.identity else {
+                return Step::Fatal(ErrorCode::NotPaired, "no device on this connection".into());
+            };
+            match handle_read_request(message, &settings.upload_storage, device_id).await {
+                Ok(reply) => Step::Reply(reply),
+                Err((code, text)) => Step::Reply(Message::Error {
+                    code: code.code(),
+                    message: fit_message(&text),
+                }),
+            }
+        }
         // Allowed by the state machine, handled in later milestones. Not fatal.
         _ => Step::Reply(Message::Error {
             code: ErrorCode::Internal.code(),
             message: NOT_IMPLEMENTED_MESSAGE.to_owned(),
         }),
+    }
+}
+
+/// Passes a browse or download request (spec §9) to its handler. Its
+/// errors are not fatal.
+async fn handle_read_request(
+    message: Message,
+    storage: &UploadStorage,
+    device_id: u64,
+) -> Result<Message, ReadError> {
+    match message {
+        Message::ListDevices => handle_list_devices(storage, device_id).await,
+        Message::ListDir {
+            device_id: requested_device_id,
+            path,
+            start_after,
+            max_entries,
+        } => {
+            let request = ListDirRequest {
+                device_id: requested_device_id,
+                path,
+                start_after,
+                max_entries,
+            };
+            handle_list_dir(storage, device_id, request).await
+        }
+        Message::ReadFile {
+            device_id: requested_device_id,
+            path,
+            version_id,
+        } => {
+            let request = ReadFileRequest {
+                device_id: requested_device_id,
+                path,
+                version_id,
+            };
+            handle_read_file(storage, device_id, request).await
+        }
+        Message::ReadChunk { chunk_sha256 } => handle_read_chunk(storage, chunk_sha256).await,
+        other => Err((
+            ErrorCode::Internal,
+            format!("{} is not a browse request", other.message_type().name()),
+        )),
     }
 }
 
@@ -671,21 +732,39 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn request_not_built_yet_gets_internal_and_the_session_goes_on() {
+    async fn browse_requests_are_answered_and_their_errors_are_not_fatal() {
         let mut client = TestClient::start(Some(1));
         client.hello().await;
         client.send(&Message::ListDevices, 2).await;
         let (request_id, reply) = client.receive().await.unwrap();
         assert_eq!(request_id, 2);
-        assert_eq!(
+        assert!(matches!(
             reply,
-            Message::Error {
-                code: error(ErrorCode::Internal),
-                message: NOT_IMPLEMENTED_MESSAGE.to_owned(),
-            }
+            Message::DeviceList { ref devices } if devices.len() == 1 && devices[0].is_caller
+        ));
+        let bad_list = Message::ListDir {
+            device_id: 0,
+            path: String::new(),
+            start_after: String::new(),
+            max_entries: 0,
+        };
+        client.send(&bad_list, 3).await;
+        let (_, reply) = client.receive().await.unwrap();
+        assert!(
+            matches!(reply, Message::Error { code, .. } if code == error(ErrorCode::BadArgument))
         );
-        client.send(&Message::Ping, 3).await;
-        assert_eq!(client.receive().await, Some((3, Message::Pong)));
+        client
+            .send(
+                &Message::ReadChunk {
+                    chunk_sha256: ChunkHash([1; 32]),
+                },
+                4,
+            )
+            .await;
+        let (_, reply) = client.receive().await.unwrap();
+        assert!(matches!(reply, Message::Error { code, .. } if code == error(ErrorCode::NotFound)));
+        client.send(&Message::Ping, 5).await;
+        assert_eq!(client.receive().await, Some((5, Message::Pong)));
     }
 
     #[tokio::test]

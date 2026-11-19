@@ -21,6 +21,7 @@ first.
 | M0 check (`cli ping` gets `Pong`) | `e2e/scripts/m0_ping.sh` |
 | M1 check (restored hash = source hash) | `e2e/scripts/m1_upload.sh` |
 | M3 check (pair, ping, upload over mutual TLS, restore) | `e2e/scripts/m3_pair.sh` |
+| M5 check (list and download a tree over TLS, old version) | `e2e/scripts/m5_download.sh` |
 | Lint | `cargo clippy -p haotrannas-e2e --all-targets -- -D warnings` |
 | Lint scripts | `shellcheck e2e/scripts/*.sh` |
 
@@ -60,8 +61,8 @@ version counts and marks chunks bad.
 
 `cli ping` prints Pong · garbage → `MALFORMED_FRAME` (id 0) then end ·
 unknown type → `MALFORMED_FRAME` with its id · Hello v2 → `VERSION_MISMATCH` ·
-FileOffer / Ping before Hello → `UNEXPECTED_MESSAGE` · not-yet-built request
-→ `INTERNAL`, connection stays · handshake timeout → `Close HANDSHAKE_TIMEOUT` ·
+FileOffer / Ping before Hello → `UNEXPECTED_MESSAGE` · a request error
+(`ReadFile` of a missing path → `NOT_FOUND`) is not fatal, connection stays · handshake timeout → `Close HANDSHAKE_TIMEOUT` ·
 two clients at once both get Pong · admin `status` counts connections ·
 SIGTERM → `Close SERVER_SHUTDOWN`, clean exit · `--dev-plain` refuses
 `0.0.0.0` · TLS `run` on a missing folder exits 1 · `init` twice refused with
@@ -101,6 +102,19 @@ the server id · cli without `--dev-plain` and without a pairing exits 1
 | `tls_run_refuses_a_data_folder_with_the_dev_device` | D-026 |
 | `admin_pair_needs_tls_mode` | `pair` on a dev-plain server → exit 1 |
 | `identical_uploads_racing_commit_to_one_version` | D-029: two uploads offered before either commit → same version id, 1 version |
+
+## Tests (`tests/m5.rs`)
+
+TLS server, paired cli; a raw TLS client with the cli's certificate checks
+exact replies.
+
+| Test | Proves |
+|---|---|
+| `tree_lists_exactly_as_the_spec_says_and_every_file_downloads_byte_equal` | Tree with folders, a 0-byte file, 3 MiB + 17 B, Vietnamese names, folder `2024` next to `2024.txt`: `cli list` of root and folders (order, kinds, columns); `ListDevices` (is_caller); `ListDir` paging 2 per page (`has_more`, folder entries 0/0/0); `BAD_ARGUMENT` (0, 1001), `BAD_PATH`, `NOT_FOUND` (device, folder, a file as folder), connection stays; every file downloads byte-equal; unknown path → `NOT_FOUND`, nothing written; existing output needs `--force`; no temp file left |
+| `old_version_downloads_by_its_version_id` | Re-upload a changed file: `list` shows the new version; `--version <old id>` gives the old bytes; unknown version → `NOT_FOUND` |
+| `new_phone_lists_and_downloads_the_old_phones_files_even_after_revoke` | Second cli identity: `ListDevices` shows both, `list --device`, `download --device` byte-equal; after `devices --revoke` the old phone is hidden from `ListDevices` but its files still download (D-025) |
+| `corrupt_chunk_fails_the_download_with_not_found_and_is_marked_bad` | One flipped byte in chunk 1 on disk → download exit 1 with `NOT_FOUND` at chunk 1, no output, no temp file; catalog status `bad`; the next upload repairs it and download works |
+| `chunk_only_in_an_uncommitted_upload_is_not_found` | `upload --stop-after-chunks 1`: the stored chunk (status ok) → `ReadChunk` `NOT_FOUND`; unknown hash → `NOT_FOUND`; root listing empty |
 
 Disk use: up to ~100 MB at once under `$TMPDIR` while the tests run in
 parallel. Data folders need a short path (admin socket < 108 bytes).
@@ -148,6 +162,14 @@ The M3 pairing check: builds, `init` + TLS `run` via `start_dev_server.sh
 --tls`, `haotrannas-server pair`, `haotrannas-cli pair --expect-server-id`,
 `ping`, `upload` (2 MiB + 5 B), stops the server, restores offline with
 `--device-id`, `cmp`. Prints `m3_pair: OK`.
+
+### `scripts/m5_download.sh`
+
+The M5 browse and download check: builds, TLS `run`, pairs the cli, uploads
+a tree (a folder, a 0-byte file, 3 MiB + 17 B, a Vietnamese name), checks
+`list` of the root and `photos`, downloads every file and `cmp`s it, then
+uploads a changed `top.txt` and downloads the old version by id. Prints
+`m5_download: OK`.
 
 ### `scripts/flutter_vs_server.sh`
 

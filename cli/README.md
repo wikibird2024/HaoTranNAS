@@ -19,6 +19,8 @@ Run from the repo root (Cargo workspace).
 | Ping (TLS, paired) | `cargo run -p haotrannas-cli -- ping --count 3` |
 | Run (dev, M0) | `cargo run -p haotrannas-cli -- --server 127.0.0.1:47100 ping --dev-plain --count 3` |
 | Upload (dev, M1/M2) | `cargo run -p haotrannas-cli -- --server 127.0.0.1:47100 upload photo.jpg --as camera/photo.jpg --dev-plain` |
+| List (M5, paired) | `cargo run -p haotrannas-cli -- list camera` |
+| Download (M5, paired) | `cargo run -p haotrannas-cli -- download camera/photo.jpg --output photo.jpg` |
 | Help | `cargo run -p haotrannas-cli -- --help` |
 | Test | `cargo test -p haotrannas-cli` |
 | Lint | `cargo clippy -p haotrannas-cli --all-targets -- -D warnings` |
@@ -38,7 +40,9 @@ Start a server for it first (see `server/README.md`, or
 | `--server <host:port> upload <file> [--as <remote-path>] --dev-plain` | 🟢 M1/M2 | Exactly one line: `already backed up: version <id>` or `uploaded <sent> of <total> chunks (<new_bytes> bytes), version <id>` |
 | `upload ... --stop-after-chunks N` (test) | 🟢 M2 | Ends after N chunks without `Commit` (a dropped connection): `stopped after <n> chunks (no commit)` |
 | `upload ... --drop-after-commit` (test) | 🟢 M2 | Sends `Commit` and disconnects without reading `CommitOk` (a lost reply): `uploaded <sent> of <total> chunks (<new_bytes> bytes), commit sent, reply not read` |
-| `upload-dir list download` | ⚪ later | "not implemented yet", exit 2 |
+| `[--server <host:port>] list [--device <id>] [<remote-path>] [--dev-plain]` | 🟢 M5 | One line per entry, all pages (1000 per request), sorted byte-wise: `d <name>/` for a folder, `f <name>  <size>  <mtime UTC>  v<version>` for a file (two spaces between columns). Nothing for an empty root; `NOT_FOUND` (exit 1) for a folder with no files |
+| `[--server <host:port>] download <remote-path> --output <file> [--device <id>] [--version <id>] [--force] [--dev-plain]` | 🟢 M5 | `downloaded <path> version <id> (<size> bytes, <n> chunks) to <file>`. Refuses an existing `<file>` without `--force` |
+| `upload-dir` | ⚪ later | "not implemented yet", exit 2 |
 
 How `upload` works: one streaming pass hashes the file (`core::chunker`);
 the backup path is `--as` or the file name (path rules checked locally);
@@ -47,6 +51,15 @@ chunk again and re-hashes it; a difference stops with
 `file changed during upload` (exit 1). On `CHUNKS_MISSING` at `Commit` it
 offers the file again, at most 3 offers in all; it never retries `Commit`
 alone.
+
+How `download` works (spec §9): `ReadFile` gives the manifest; the chunk
+count must match the size. A temp file `.<name>.download-<pid>` is created
+next to the output. For each hash, in order, `ReadChunk` → `ChunkContent`:
+same hash, right length for its index, SHA-256 of the bytes = hash. Then the
+whole-file SHA-256 must equal the manifest's; then fsync, set the file's
+modified time, and rename over the output. On any failure the temp file is
+removed and the output is untouched. `--device <id>` reads another device's
+backup (restore an old phone onto a new one; ids from `ListDevices`).
 
 ### Pairing and identity (M3)
 
