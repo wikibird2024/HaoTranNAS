@@ -1,0 +1,43 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  HaoTranNAS mDNS announcement for avahi (static fallback). Author: Hao Tran
+
+  Normally NOT needed: haotrannas-server announces itself (mdns-sd, config
+  mdns_enabled = true) and shares UDP 5353 with avahi-daemon (SO_REUSEPORT;
+  checked on the dev PC with avahi running). Use this file only if the two
+  conflict on the NAS (phones and `haotrannas-cli discover` find nothing
+  while the server runs):
+    1. set `mdns_enabled = false` in /etc/haotrannas/config.toml, restart
+    2. fill name, port and fp below
+    3. sudo cp nas/avahi/haotrannas.service /etc/avahi/services/
+       (avahi picks up the folder by itself)
+    4. check from another PC on the LAN: haotrannas-cli discover
+
+  Same records as the server (protocol/spec.md section 13):
+    name  = server_name from config.toml (default "haotrannas")
+    port  = the port of listen_address (default 47100)
+    v=1   = protocol version
+    fp    = first 16 lowercase hex chars of the server fingerprint
+
+  fp: `haotrannas-server init` prints only the short server id (first 12
+  hex chars in groups, e.g. 3F9A-C21B-77E0): too short. The fingerprint is
+  the SHA-256 of the server certificate (DER), so on the NAS run:
+    openssl x509 -in /srv/haotrannas/tls/server.crt -outform DER | sha256sum | cut -c1-16
+  Check: its first 12 chars equal the short id without dashes, in lower
+  case. fp changes only if tls/ is made again (then every device pairs
+  again and this file needs the new value).
+
+  Difference to the server's own announcement: the SRV target is the NAS
+  host name (<hostname>.local), whose avahi records may include AAAA.
+  Clients use the IPv4 A record only, so that is harmless.
+-->
+<service-group>
+  <name>haotrannas</name>
+  <service protocol="ipv4">
+    <type>_haotrannas._tcp</type>
+    <port>47100</port>
+    <txt-record>v=1</txt-record>
+    <txt-record>fp=0000000000000000</txt-record>
+  </service>
+</service-group>

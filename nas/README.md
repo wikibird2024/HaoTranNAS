@@ -29,3 +29,4 @@ Setup on the real NAS: [RUNBOOK.md](RUNBOOK.md).
 | `scripts/install.sh` | Service user, binary, config, data folder owner, systemd unit (enabled, not started) |
 | `systemd/haotrannas-server.service` | Hardened unit: no capabilities, writes only `/srv/haotrannas` |
 | `config.example.toml` | Every server setting with its default; a server test keeps it equal to the code |
+| `avahi/haotrannas.service` | Static avahi mDNS fallback, only if the server's own announcement and avahi conflict |
