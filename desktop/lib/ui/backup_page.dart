@@ -35,7 +35,7 @@ class BackupPage extends ConsumerWidget {
   );
 }
 
-/// Run now / Stop / Verify with live numbers and the last results. Also
+/// Run now / Stop / Check with live numbers and the last results. Also
 /// on the Overview page.
 class BackupNowCard extends ConsumerWidget {
   const BackupNowCard({super.key});
@@ -67,7 +67,7 @@ class BackupNowCard extends ConsumerWidget {
                     OutlinedButton.icon(
                       onPressed: source.verifyAll,
                       icon: const Icon(Icons.fact_check_outlined),
-                      label: const Text('Verify'),
+                      label: const Text('Check'),
                     ),
                     FilledButton.icon(
                       onPressed: source.runNow,
