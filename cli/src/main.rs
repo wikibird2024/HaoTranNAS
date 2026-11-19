@@ -5,6 +5,7 @@
 //! (and so every command without `--dev-plain`) arrives in M3.
 
 mod connection;
+mod discover;
 mod ping;
 mod upload;
 
@@ -49,7 +50,7 @@ enum Command {
     /// Download one backed-up file.
     Download,
     /// Find servers on the LAN via mDNS.
-    Discover,
+    Discover(discover::DiscoverArgs),
 }
 
 #[derive(Debug, Args)]
@@ -90,7 +91,7 @@ impl Command {
             Self::UploadDir => "upload-dir",
             Self::List => "list",
             Self::Download => "download",
-            Self::Discover => "discover",
+            Self::Discover(_) => "discover",
         }
     }
 }
@@ -106,6 +107,9 @@ fn main() -> ExitCode {
     match &cli.command {
         Command::Ping(ping_args) => run_ping_command(cli.server.as_deref(), ping_args),
         Command::Upload(upload_args) => run_upload_command(cli.server.as_deref(), upload_args),
+        Command::Discover(discover_args) => {
+            discover::run_discover_command(cli.identity_dir.as_deref(), discover_args)
+        }
         other => {
             eprintln!("haotrannas-cli {}: not implemented yet", other.name());
             ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE)

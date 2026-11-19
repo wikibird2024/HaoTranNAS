@@ -20,6 +20,7 @@ mod data_folder;
 mod handlers;
 mod jobs;
 mod listener;
+#[allow(dead_code, reason = "started by the TLS run path (M3)")]
 mod mdns;
 mod pairing;
 mod restore;
