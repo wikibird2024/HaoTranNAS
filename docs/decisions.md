@@ -42,6 +42,9 @@ Rules:
 | D-026 | Dev mode (`--dev-plain`, loopback only) uses a real `devices` row id 1 named `dev` with an all-zero cert hash; dev mode refuses a data folder that has real devices; TLS mode will refuse to start while the dev row exists | Uploads in M1/M2 need a real device row; no certificate hashes to all zeros, so no TLS client can ever match it | 🟢 | Wave 4 (TLS run) |
 | D-030 | Clients wait for `CommitOk` in proportion to the file size: 30 s + 1 s per 20 MiB (spec §8, §14); every other request keeps its fixed timeout | The server re-hashes the whole file before CommitOk; a fixed 10–30 s timeout made every big file fail on a slow disk (found when e2e tests ran on the slow `/mnt/storage` disk) | 🟢 | Real NAS disk speed measured |
 | D-031 | `ListDevices` lists revoked devices too (no wire change; DeviceEntry has no revoked flag) | A lost phone is revoked, and the new phone must still find it to restore its files (D-019, D-025) | 🟢 | The app needs to label revoked devices → add a flag in protocol v2 |
+| D-032 | Phone backup runs newest first, with a time budget; a stopped run resumes by re-offering (the server keeps uploaded chunks) | New photos are safe first; WorkManager stops jobs after ~10 min | 🟢 | Users want "oldest first" for a first full backup |
+| D-033 | Phone keeps backup state, settings, last reports and a run lock in one SQLite file (no shared_preferences) | One atomic store that the app and the background job both open | 🟢 | Lock problems seen on a real phone |
+| D-034 | "Back up now" runs on any network; Wi-Fi only / charging only shape only the background job | A tap is an explicit request | 🟡 | Hao wants the tap to respect the settings |
 | D-025 | Revoking a device never deletes its backups: `devices.revoked_at_ms` marks it, a revoked cert is refused like an unknown one; `remove_device` stays only for devices with no backups | A lost phone must be locked out while its photos stay restorable | 🟢 | — |
 
 ## Open questions

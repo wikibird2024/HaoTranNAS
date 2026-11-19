@@ -115,6 +115,13 @@ Same layering as Protocol Lab: **codec = pure bytes, Link = I/O, screens = glue.
  Screens: Pairing · Backup status · Browse + restore · Settings · Debug log
 ```
 
+| Rule | Why |
+|---|---|
+| A run uploads newest first and stops at its budget (9 min background, 15 min "Back up now"); the next run re-offers and sends only missing chunks (D-032) | Today's photo must not wait behind 20,000 old ones |
+| Backup state, settings, last reports and a run lock live in one SQLite file (D-033) | The app and the background job share it; the lock stops both uploading at once |
+| "Back up now" ignores the Wi-Fi/charging settings; they shape only the background job (D-034) | A tap is an explicit request |
+| "Verify backup" re-offers every backed-up file; the server asks for any chunk scrub marked bad (spec §8) | Repair without ZFS (M6) |
+
 ## 7. Server inside: layers
 
 Each layer only talks to the one below it.

@@ -103,8 +103,9 @@ abstract interface class BackupStatusSource implements Listenable {
   /// or was refused; progress comes through [activity] and [lastRun].
   Future<void> runNow();
 
-  /// Checks every backed-up file against the server (spec §9 download
-  /// path); the result comes through [lastVerify].
+  /// Re-offers every backed-up file so the server asks again for any
+  /// missing or bad chunk (spec §8 repair note); the result comes through
+  /// [lastVerify].
   Future<void> verifyAll();
 
   /// Saves [settings] and reschedules the background job.
