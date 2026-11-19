@@ -1,5 +1,6 @@
 // Status and Settings screens with a fake BackupStatusSource, identity
 // and connection; App start choosing Pairing or Status. Author: Hao Tran.
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
@@ -235,6 +236,22 @@ void main() {
         find.text('Server id $testShortId · this phone is device 3'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('iPhone: no Wi-Fi/charging switches, says when it runs', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await pumpWithFakes(tester, const SettingsScreen());
+        expect(find.text('Runs while the app is open'), findsOneWidget);
+        expect(find.byKey(const Key('settings.wifiOnly')), findsNothing);
+
+        await pumpWithFakes(tester, const StatusScreen());
+        expect(find.text('Each time you open the app'), findsOneWidget);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
 
     testWidgets('unpair asks first; Cancel keeps the pairing', (tester) async {

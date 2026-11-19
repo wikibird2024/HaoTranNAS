@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:haotrannas_client/app/client_providers.dart';
 import 'package:haotrannas_client/backup/backup_controller.dart';
@@ -23,6 +24,7 @@ import 'package:haotrannas_client/discovery/discovery.dart';
 import '../backup/background.dart';
 import '../backup/gallery.dart';
 import '../backup/photo_media_source.dart';
+import '../core/discovery/bonjour_finder.dart';
 import '../core/transport/multicast_lock.dart';
 
 export 'package:haotrannas_client/app/client_providers.dart';
@@ -63,8 +65,18 @@ BackupStatusSource appBackupStatusSource(Ref ref, BackupStateStore store) {
     log: log.note,
   );
   final source = BackupControllerStatusSource(controller);
-  unawaited(controller.start());
+  final started = controller.start();
+  unawaited(started);
+  // iPhone (D-043): no background job, so "automatic" = a run each time
+  // the app opens or comes back to the front.
+  final lifecycle = Platform.isIOS
+      ? AppLifecycleListener(onResume: () => _runIfAutomatic(controller))
+      : null;
+  if (Platform.isIOS) {
+    unawaited(started.then((_) => _runIfAutomatic(controller)));
+  }
   ref.onDispose(() {
+    lifecycle?.dispose();
     unawaited(controller.stop());
     source.dispose();
     controller.dispose();
@@ -72,13 +84,25 @@ BackupStatusSource appBackupStatusSource(Ref ref, BackupStateStore store) {
   return source;
 }
 
+/// Starts a run when automatic backup is on and nothing runs yet.
+void _runIfAutomatic(BackupController controller) {
+  if (!controller.settings.isBackupOn) return;
+  if (controller.activity != BackupActivity.idle) return;
+  unawaited(controller.runNow());
+}
+
 /// The phone's [ServerFinder]: asks the LAN for servers for 3 s while
-/// holding the Wi-Fi multicast lock (foreground only, spec §13). Without
-/// the lock (not Android) it tries anyway. Never throws: no network =
-/// empty list.
+/// holding the Wi-Fi multicast lock (foreground only, spec §13). iPhone:
+/// the phone's Bonjour instead (D-043). Never throws: no network = empty
+/// list.
 Future<List<DiscoveredServer>> findServersOnWifi({
   String? pinnedFingerprintPrefix,
 }) async {
+  if (Platform.isIOS) {
+    return findServersWithBonjour(
+      pinnedFingerprintPrefix: pinnedFingerprintPrefix,
+    );
+  }
   Future<List<DiscoveredServer>> discover() =>
       discoverServers(pinnedFingerprintPrefix: pinnedFingerprintPrefix);
   try {

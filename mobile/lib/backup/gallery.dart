@@ -1,6 +1,7 @@
 /// Puts a restored photo or video into the phone's gallery (Android
 /// MediaStore, through photo_manager), in the album [galleryFolder].
-/// Other files stay in the app's own folder. Author: Hao Tran.
+/// iPhone: into Photos (Recents); iOS has no folder path. Other files
+/// stay in the app's own folder. Author: Hao Tran.
 ///
 /// ```
 ///  restoreToPhone ─► <documents>/restored/… ─► photo or video? ─► MediaStore copy
@@ -36,7 +37,8 @@ GalleryKind? galleryKindOf(String fileName) {
 }
 
 /// Copies [localPath] into the gallery as [fileName], dated [takenAt]
-/// so it sorts where the original was. Returns the gallery folder.
+/// so it sorts where the original was. Returns where it shows up, as a
+/// path whose last part is the album name.
 /// Throws when the phone refuses; the app's copy is then kept.
 typedef AddToGallery = Future<String> Function(
   String localPath,
@@ -44,8 +46,8 @@ typedef AddToGallery = Future<String> Function(
   DateTime takenAt,
 );
 
-/// The real [AddToGallery] (Android only). On success the app's own copy
-/// is deleted: the gallery holds the file now.
+/// The real [AddToGallery] (Android and iPhone). On success the app's own
+/// copy is deleted: the gallery holds the file now.
 Future<String> addToPhoneGallery(
   String localPath,
   String fileName,
@@ -74,5 +76,6 @@ Future<String> addToPhoneGallery(
   } on FileSystemException {
     // The gallery has it; a leftover copy in the app only costs space.
   }
-  return galleryFolder;
+  // iOS ignores relativePath: the photo is in Recents.
+  return Platform.isIOS ? 'Recents' : galleryFolder;
 }

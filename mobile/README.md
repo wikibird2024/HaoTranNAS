@@ -185,6 +185,29 @@ App icon (two NAS drives + a check, white on deep blue) comes from
 Edit the script and run `python3 tool/make_launcher_icon.py`, never the files
 it writes.
 
+### iPhone (M8, D-043)
+
+CI job "iPhone" builds `haotrannas-unsigned.ipa` (artifact
+`haotrannas-ios-unsigned-ipa`) on a macOS runner, with no signing. There
+is no Mac and no paid Apple account, so the phone side signs it:
+
+```
+ CI ─► haotrannas-unsigned.ipa ─► SideStore (on the iPhone) or AltServer (PC)
+                                   signs with Hao's free Apple ID ─► installs
+                                   ⚠ expires after 7 days: refresh in SideStore
+```
+
+| Step | How |
+|---|---|
+| 1 | iPhone: Settings → Privacy & Security → Developer Mode on (iOS 16+) |
+| 2 | Install SideStore once (needs a PC once for the pairing file; see sidestore.io) |
+| 3 | Download the IPA artifact, unzip, open the `.ipa` with SideStore |
+| 4 | First open: allow Local Network (to find the NAS) and Photos |
+| 5 | Every 7 days: refresh the app in SideStore (or reinstall the latest IPA) |
+
+⚪ None of this is checked yet; it needs the iPhone. App icon: still the
+Flutter default on iPhone (`tool/make_launcher_icon.py` writes Android only).
+
 ## Run
 
 ```bash
@@ -248,6 +271,20 @@ These cannot run in CI or on the dev machine; do them on a real phone.
 | ⚪ Pairing on Wi-Fi | Pair with the code from `haotrannas-server pair` | Short id on the phone = the one the server printed; reconnect works |
 | ⚪ SHA-256 speed | Hash a large video on the phone | Speed in MB/s is noted; backup is not blocked by hashing |
 
+## iPhone checks (manual, M8)
+
+| Check | How | Pass when |
+|---|---|---|
+| ⚪ Installs | Sideload the CI IPA (above) | App opens on the pairing screen |
+| ⚪ Bonjour finds the NAS | Pairing screen on the same Wi-Fi; allow Local Network | NAS listed within 3 s (no typing) |
+| ⚪ TLS + pairing | Pair with the code | Short id = the server's; reconnect after closing the app works |
+| ⚪ Backup on open | Take a photo, open the app | Uploaded to `iPhone/<yyyy>-<mm>/IMG_….HEIC`; bytes = original (HEIC, not a JPEG copy) |
+| ⚪ Leaving the app | Big first backup, switch apps for 1 min, come back | The run stopped without harm and goes on (only missing chunks sent) |
+| ⚪ iCloud-only photos | "Optimize iPhone Storage" on, an old photo | Note the result: downloaded and uploaded, or skipped with a reason |
+| ⚪ Restore to Photos | Files → a photo → Restore to phone | "Saved to the gallery, album Recents"; shows at its original date |
+| ⚪ Limited photo access | Allow only selected photos | Only those are backed up; the app says access is limited |
+| ⚪ M8 Done when | Pair, back up a photo, restore it | Restored bytes hash = original |
+
 ## Packages
 
 Licenses checked 2026-11-18. All permissive.
@@ -261,6 +298,7 @@ Licenses checked 2026-11-18. All permissive.
 | workmanager | 0.10.10 | MIT | Background backup |
 | flutter_riverpod | 3.5.0 | MIT | App state |
 | collection | 1.19.1 | BSD-3 | List and map helpers |
+| bonsoir | 7.1.6 | MIT | Find the NAS with Bonjour on iPhone (D-043) |
 | fake_async (dev) | 1.3.3 | Apache-2.0 | Timer tests |
 | sqflite_common_ffi (dev) | 2.4.7 | BSD-2 | SQLite in host tests |
 | flutter_lints (dev) | 6.0.0 | BSD-3 | Lints |

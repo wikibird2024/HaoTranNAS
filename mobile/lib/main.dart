@@ -26,7 +26,7 @@ Future<void> main() async {
         restoreFolderProvider.overrideWithValue(
           Directory('${documents.path}/restored'),
         ),
-        if (Platform.isAndroid)
+        if (Platform.isAndroid || Platform.isIOS)
           addToGalleryProvider.overrideWithValue(addToPhoneGallery),
         backupStatusSourceProvider.overrideWith(
           (ref) => appBackupStatusSource(ref, backupStore),

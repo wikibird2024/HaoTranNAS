@@ -14,6 +14,7 @@
 /// ```
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
@@ -119,13 +120,17 @@ class _ServerCard extends ConsumerWidget {
 }
 
 /// "Runs by itself · only on Wi-Fi · only while charging" for the switch.
-String _autoBackupText(BackupSettings settings) => settings.isBackupOn
-    ? [
+/// iPhone: iOS allows no long background work, so automatic backup runs
+/// each time the app opens (D-043).
+String _autoBackupText(BackupSettings settings) => !settings.isBackupOn
+    ? 'Off: only "Back up now" backs up'
+    : defaultTargetPlatform == TargetPlatform.iOS
+    ? 'Each time you open the app'
+    : [
         'Runs by itself',
         if (settings.isWifiOnly) 'only on Wi-Fi',
         if (settings.isChargingOnly) 'only while charging',
-      ].join(' · ')
-    : 'Off: only "Back up now" backs up';
+      ].join(' · ');
 
 class _BackupCard extends ConsumerWidget {
   const _BackupCard();

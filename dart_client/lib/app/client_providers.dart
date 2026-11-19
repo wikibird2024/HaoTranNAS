@@ -48,7 +48,11 @@ final clientSoftwareProvider = Provider<String>(
 /// Sent in Hello (`device_name`); the NAS lists the device under it.
 // shortcut: a fixed name; a "device name" setting can come later.
 final deviceNameProvider = Provider<String>(
-  (ref) => Platform.isAndroid ? 'Android phone' : Platform.localHostname,
+  (ref) => Platform.isAndroid
+      ? 'Android phone'
+      : Platform.isIOS
+      ? 'iPhone'
+      : Platform.localHostname,
 );
 
 /// Set in `main()`: `IdentityStore.forApp()`.

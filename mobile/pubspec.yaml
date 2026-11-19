@@ -9,6 +9,7 @@ environment:
 # Licenses checked 2026-11-18, all permissive (BSD, MIT, Apache-2.0):
 # see README.md "Packages". Check the license before adding one.
 dependencies:
+  bonsoir: ^7.1.6
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.5.0

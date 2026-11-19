@@ -9,6 +9,19 @@ import 'dart:io';
 import 'package:haotrannas_client/backup/media_source.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+/// Folder on the NAS for an iPhone photo: `iPhone/<yyyy>-<mm>` of the
+/// day it was taken, in UTC so a trip abroad never moves a path. iOS has
+/// no folders, and its `IMG_0001` names roll over after 9999, so one flat
+/// folder would mix two photos with the same name. Pure.
+String iPhoneMediaFolder(int createdSeconds) {
+  final created = DateTime.fromMillisecondsSinceEpoch(
+    createdSeconds * 1000,
+    isUtc: true,
+  );
+  final month = created.month.toString().padLeft(2, '0');
+  return 'iPhone/${created.year}-$month';
+}
+
 /// The real phone library through package:photo_manager.
 class PhotoManagerMediaSource implements MediaSource {
   /// [isBackground]: no permission dialog (no Activity); reads with what
@@ -109,7 +122,12 @@ class PhotoManagerMediaSource implements MediaSource {
     return MediaItem(
       id: asset.id,
       relativePath: mediaRemotePath(
-        folder: asset.relativePath,
+        // Android: DCIM/Camera/…; iPhone has none (D-043).
+        folder:
+            asset.relativePath ??
+            (Platform.isIOS
+                ? iPhoneMediaFolder(asset.createDateSecond ?? modifiedSeconds)
+                : null),
         fileName: title,
         mediaId: asset.id,
       ),

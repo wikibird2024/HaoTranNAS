@@ -142,6 +142,23 @@ package `dart_client/` (D-040), so the PC app (M7) runs the same client:
 | "Check backup" (verify) re-offers every backed-up file; the server asks for any chunk scrub marked bad (spec §8) | Repair without ZFS (M6) |
 | A restored photo or video goes into the gallery album `HaoTranNAS`; other files stay in the app (D-042) | A path inside the app's private folder is useless to the user |
 
+### iPhone (same app, M8, D-043)
+
+```
+ Android                                   iPhone
+ mDNS raw socket + multicast lock   ──►    Bonjour (bonsoir, NSBonjourServices)
+ WorkManager every 15 min + 5 h job ──►    a run each time the app opens / comes back
+ DCIM/Camera/IMG_1.jpg              ──►    iPhone/2026-11/IMG_0042.HEIC
+ restore ─► album HaoTranNAS        ──►    restore ─► Photos (Recents)
+ APK, fixed key, CI                 ──►    unsigned IPA from CI, sideloaded (free Apple ID, 7 days)
+ dart_client, screens, pairing, TLS, upload, browse: the same code
+```
+
+| Rule | Why |
+|---|---|
+| iPhone backs up only while the app is open | iOS gives no long background time; our protocol is TLS, not HTTP |
+| Folder = UTC month of the photo | Deterministic path (no re-upload after a trip); no IMG_xxxx clash |
+
 ## 6b. PC app (Flutter desktop, `desktop/`, M7)
 
 Same client as the phone (`dart_client/`, D-040), a wide UI, and the NAS

@@ -100,6 +100,38 @@ jobs:
           name: haotrannas-mobile-apk
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
 
+  # iPhone app (D-043). Unsigned: there is no Apple account in CI and no
+  # Mac at home. Hao signs it on the phone side with a free Apple ID
+  # (SideStore or AltServer), which lasts 7 days. Tests run in "mobile".
+  ios:
+    name: iPhone (unsigned IPA for sideloading)
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build iPhone app (no signing)
+        run: flutter build ios --release --no-codesign --build-number=${{ github.run_number }}
+      # An .ipa is just Payload/Runner.app zipped; sideloading tools sign it.
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa && zip -qry haotrannas-unsigned.ipa Payload
+          ls -l haotrannas-unsigned.ipa
+      - name: Keep IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: haotrannas-ios-unsigned-ipa
+          path: mobile/build/ipa/haotrannas-unsigned.ipa
+
   desktop:
     name: Desktop (analyze, tests, Linux bundle)
     runs-on: ubuntu-24.04

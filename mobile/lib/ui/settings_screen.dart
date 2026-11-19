@@ -5,6 +5,7 @@
 /// Author: Hao Tran.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
@@ -53,31 +54,46 @@ class SettingsScreen extends ConsumerWidget {
         builder: (context, _) {
           final settings = source.settings;
           void update(BackupSettings changed) => source.updateSettings(changed);
+          final isIPhone = defaultTargetPlatform == TargetPlatform.iOS;
           return ListView(
             children: [
               const _SectionTitle('Automatic backup'),
-              SwitchListTile(
-                key: const Key('settings.wifiOnly'),
-                title: const Text('Only on Wi-Fi'),
-                subtitle: const Text('Never use mobile data'),
-                value: settings.isWifiOnly,
-                onChanged: (isOn) =>
-                    update(settings.copyWith(isWifiOnly: isOn)),
-              ),
-              SwitchListTile(
-                key: const Key('settings.chargingOnly'),
-                title: const Text('Only while charging'),
-                subtitle: const Text('Wait until the phone is plugged in'),
-                value: settings.isChargingOnly,
-                onChanged: (isOn) =>
-                    update(settings.copyWith(isChargingOnly: isOn)),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  '"Back up now" runs on any network, charging or not.',
+              // iPhone (D-043): no background job, so Wi-Fi and charging
+              // conditions have nothing to shape.
+              if (isIPhone)
+                const ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text('Runs while the app is open'),
+                  subtitle: Text(
+                    'iPhone does not let apps run long backups in the '
+                    'background. Open the app on Wi-Fi to back up; leave '
+                    'it open for a big first backup.',
+                  ),
                 ),
-              ),
+              if (!isIPhone) ...[
+                SwitchListTile(
+                  key: const Key('settings.wifiOnly'),
+                  title: const Text('Only on Wi-Fi'),
+                  subtitle: const Text('Never use mobile data'),
+                  value: settings.isWifiOnly,
+                  onChanged: (isOn) =>
+                      update(settings.copyWith(isWifiOnly: isOn)),
+                ),
+                SwitchListTile(
+                  key: const Key('settings.chargingOnly'),
+                  title: const Text('Only while charging'),
+                  subtitle: const Text('Wait until the phone is plugged in'),
+                  value: settings.isChargingOnly,
+                  onChanged: (isOn) =>
+                      update(settings.copyWith(isChargingOnly: isOn)),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    '"Back up now" runs on any network, charging or not.',
+                  ),
+                ),
+              ],
               const Divider(),
               const _SectionTitle('NAS'),
               if (identity != null)
