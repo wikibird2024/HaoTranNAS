@@ -1,0 +1,29 @@
+name: haotrannas_desktop
+description: "HaoTranNAS PC app: backs up PC folders, browses and restores, manages the NAS."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+# Licenses checked 2026-11-19, all permissive (BSD-3): file_selector and
+# sqflite_common_ffi (system libsqlite3). Check the license before adding one.
+dependencies:
+  file_selector: ^1.0.3
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^3.5.0
+  # Shared client logic (D-040).
+  haotrannas_client:
+    path: ../dart_client
+  path_provider: ^2.1.6
+  sqflite_common_ffi: ^2.4.7
+
+dev_dependencies:
+  crypto: ^3.0.8
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

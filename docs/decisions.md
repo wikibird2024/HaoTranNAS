@@ -50,6 +50,8 @@ Rules:
 | D-037 | Phone backs up chosen albums only; never chosen = the `Camera` album; the choice is saved with the settings (`folder_ids`) | First phone test: a whole library is too big to start with; Immich and Ente ask for albums too | 🟢 | Phones without a `Camera` album, or users who want "everything" by default |
 | D-038 | "Back up now" is a one-off long-running workmanager job (dataSync foreground service, fixed notification, up to 5 h); the app sees it through workmanager progress, stops it through a `stop_requested` value; the job refreshes the run lock every minute. Every run uploads while it scans (no full scan first) | First phone test: a big library spent the whole 15 min budget scanning and nothing was uploaded, with no numbers on screen | 🟡 | Android 15 dataSync time limit hit, or live numbers wanted in the notification |
 | D-040 | Client logic shared by the phone and PC apps lives in one Flutter package, `dart_client/` (`haotrannas_client`): protocol codec, Link/TLS, discovery, pairing, upload/download, backup runner/store/controller and the `MediaSource` interface. Apps keep only their platform parts (phone: photo_manager source, workmanager jobs, multicast lock; PC: folder source) and their UI. The SQLite store takes a `DatabaseFactory` (phone: sqflite plugin, PC: ffi) | Conventions forbid anything → mobile; copying 8k tested lines into the PC app would make two clients drift | 🟢 | A third Dart app, or the package grows UI code |
+| D-039 | PC app = Flutter desktop, Linux first (`desktop/`). Scope: back up chosen PC folders, browse and restore (a file or a whole folder, never replacing a PC file), NAS admin (devices, revoke, pairing code, scrub, cleanup). No server-config editing, no delete. Backup runs while the app is open: hourly timer, 6 h budget (no service, no tray yet). Remote path = `<folder name>/<path inside>`; two chosen folders may not share a name. The run lock is named `desktop-<pid>` and a dead app's lock is freed at start | Same UI stack as the phone; a GUI that edits config or deletes is risk on the box holding every backup (conventions §4) | 🟢 | Windows wanted, backups needed with the app closed, or a tray |
+| D-041 | PC admin = the existing admin.sock line protocol (D-023), directly when the server runs on this PC, else through `ssh -N -L <local sock>:<data_dir>/admin.sock` with the user's keys (BatchMode, no password stored). No admin over TLS, no web admin, no new port | No new server code or attack surface; SSH already guards the NAS | 🟡 | ⚪ The NAS SSH user cannot open admin.sock (0600, user haotrannas): a group for it is due in M3n |
 | D-025 | Revoking a device never deletes its backups: `devices.revoked_at_ms` marks it, a revoked cert is refused like an unknown one; `remove_device` stays only for devices with no backups | A lost phone must be locked out while its photos stay restorable | 🟢 | — |
 
 ## Open questions
@@ -58,8 +60,8 @@ Rules:
 |---|---|---|
 | ~~O-1~~ | Closed 2026-11-18: no import, new Flutter app (D-016) | — |
 | ~~O-2~~ | Closed 2026-11-18: Protocol Lab speaks many protocols; we reuse its patterns and its mDNS code, not a protocol (D-016) | — |
-| O-3 | Server hardware (PC, Raspberry Pi, disks)? | M3n, D-013 |
-| O-4 | Desktop app: which OS, backup only or also browse? | M7 |
+| ~~O-3~~ | Closed 2026-11-19: a mini PC running Linux (model and disks still to pick in M3n) | — |
+| ~~O-4~~ | Closed 2026-11-19: Linux first; backup + browse/restore + NAS admin (D-039, D-041) | — |
 
 ## Template for a new decision
 

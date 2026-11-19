@@ -22,6 +22,8 @@ first.
 | M1 check (restored hash = source hash) | `e2e/scripts/m1_upload.sh` |
 | M3 check (pair, ping, upload over mutual TLS, restore) | `e2e/scripts/m3_pair.sh` |
 | M5 check (list and download a tree over TLS, old version) | `e2e/scripts/m5_download.sh` |
+| Dart client against the server (phone and PC share it) | `e2e/scripts/flutter_vs_server.sh` |
+| M7 check (PC folder backed up and restored, admin) | `e2e/scripts/desktop_vs_server.sh` |
 | Lint | `cargo clippy -p haotrannas-e2e --all-targets -- -D warnings` |
 | Lint scripts | `shellcheck e2e/scripts/*.sh` |
 
@@ -190,8 +192,20 @@ uploads a changed `top.txt` and downloads the old version by id. Prints
 ### `scripts/flutter_vs_server.sh`
 
 Starts a dev-plain server and a TLS server on two temp folders and runs
-`flutter test --tags server` (in `mobile/`) with `NAS_SERVER_ADDR`,
+`flutter test --tags server` (in `dart_client/`) with `NAS_SERVER_ADDR`,
 `NAS_DATA_DIR` (dev-plain, unchanged), `NAS_TLS_SERVER_ADDR`,
 `NAS_TLS_DATA_DIR` (TLS) and `NAS_SERVER_BIN`. The Dart tests get pairing
 codes with `$NAS_SERVER_BIN pair --data-dir $NAS_TLS_DATA_DIR`. Both servers
 are stopped and both folders removed on exit.
+
+### `scripts/desktop_vs_server.sh`
+
+M7 check. Starts a TLS server in a temp folder and runs `flutter test
+--tags server` in `desktop/` with `NAS_TLS_SERVER_ADDR` and
+`NAS_TLS_DATA_DIR`. The test pairs with a code from the server's
+admin.sock (as "Pair in one click" does), backs up a PC folder (nested
+folders, a 20 MiB file, a Unicode name, an empty file, a symlink that is
+skipped), runs again (nothing sent), restores the whole folder and
+compares every SHA-256, then runs devices, scrub-now, scrub-report,
+cleanup-now and revoke (the revoked device is refused). The server is
+stopped and the folder removed on exit.

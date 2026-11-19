@@ -1,6 +1,6 @@
 # HaoTranNAS — Architecture
 
-Author: Hao Tran · Status: Draft v0.3 · 2026-11-18
+Author: Hao Tran · Status: Draft v0.4 · 2026-11-19
 
 Read first: [concepts.md](concepts.md), the ideas this design rests on.
 See also: [community-research.md](community-research.md), the projects this design borrows from.
@@ -99,7 +99,8 @@ package `dart_client/` (D-040), so the PC app (M7) runs the same client:
 ```
  dart_client/  protocol · core (Link, TLS, log) · discovery · client (pairing, upload,
                download, identity, address book) · backup (runner, store, controller,
-               MediaSource interface) · text formatting · testing (fakes for tests)
+               MediaSource interface) · app (Riverpod state: identity, connection,
+               pairing) · text (formatting, backup summaries) · testing (fakes)
      ▲                                   ▲
  mobile/  photo_manager source,      desktop/  (M7)
           workmanager jobs, multicast lock, phone UI
@@ -137,6 +138,31 @@ package `dart_client/` (D-040), so the PC app (M7) runs the same client:
 | Backup state, settings, last reports and a run lock live in one SQLite file (D-033) | The app and the background job share it; the lock stops both uploading at once |
 | "Back up now" ignores the Wi-Fi/charging settings; they shape only the background job (D-034) | A tap is an explicit request |
 | "Verify backup" re-offers every backed-up file; the server asks for any chunk scrub marked bad (spec §8) | Repair without ZFS (M6) |
+
+## 6b. PC app (Flutter desktop, `desktop/`, M7)
+
+Same client as the phone (`dart_client/`, D-040), a wide UI, and the NAS
+admin panel (D-039, D-041).
+
+```
+ ┌───────────────┬───────────────────────────────────────────┐
+ │ rail:         │ Overview  NAS card + this PC's backup     │
+ │ Overview      │ Backup    folders, Back up now / Stop, hourly while open
+ │ Backup        │ Files     devices ─► folders ─► restore file / folder (hash checked)
+ │ Files         │ NAS       devices, revoke, pairing code, scrub, cleanup
+ │ NAS           │ Settings  pairing, debug log, unpair
+ │ Settings      │                                           │
+ └───────────────┴───────────────────────────────────────────┘
+ FolderMediaSource ─► BackupRunner (shared) ─► TLS ─► server
+ AdminController ─► AdminLink ─► admin.sock (this PC) │ ssh -L ─► NAS admin.sock
+```
+
+| Rule | Why |
+|---|---|
+| Backup runs only while the app is open (timer, first run 30 s after start, then hourly) | No service or tray to maintain yet (D-039) |
+| Restore never replaces a PC file: a taken name becomes `name (2)` | A restore must not destroy newer local work |
+| Admin is read-mostly: pairing code, revoke (backups stay, D-025), scrub, cleanup | No config editing and no delete from a GUI |
+| Pairing can take the code from admin.sock and compares the server id it came with | "Pair in one click" on the NAS owner's PC, still MITM-checked |
 
 ## 7. Server inside: layers
 

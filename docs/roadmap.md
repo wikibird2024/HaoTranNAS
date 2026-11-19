@@ -1,6 +1,6 @@
 # HaoTranNAS — Roadmap
 
-Author: Hao Tran · Updated: 2026-11-18
+Author: Hao Tran · Updated: 2026-11-19
 
 Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · 🔴 blocked
 
@@ -37,12 +37,12 @@ been shown. Code alone doesn't count.
 | M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | 🟡 code + host tests 2026-11-19; first phone test 2026-11-19: pairing 🟢, "Back up now" scanned without numbers and uploaded nothing → fixed by D-037 (albums) + D-038 (upload while scanning, long job with notification, 3-tab UI); phone check open (mobile/README phone checklist) |
 | M5 | Browse + download | server, mobile, cli | Read path | Restore a photo to the phone; hash matches | 🟡 Dart app downloads from the real server, bytes match (`flutter_vs_server.sh`, `m5_download.sh`) 2026-11-19; phone check open |
 | M6 | Remote + upkeep: WireGuard, scrub, cleanup, phone "verify backup" | nas, server, mobile | Networking, data care | Backup works on 4G; scrub report clean; a corrupted chunk is repaired by verify | 🟡 scrub, cleanup, heal by re-upload proven in `e2e/tests/m6.rs` 2026-11-19; 4G (WireGuard) + phone verify open |
-| M7 | Desktop app | desktop, core | Reusing core | PC folder backed up and restored | ⚪ |
+| M7 | Desktop app | desktop, dart_client | Reusing the Dart client, desktop UI, admin over SSH | PC folder backed up and restored | 🟢 2026-11-19 `e2e/scripts/desktop_vs_server.sh`: PC folder (nested, 20 MiB, Unicode, symlink skipped) backed up and restored, every SHA-256 matches; real app on this PC: one-click pairing, 66 files backed up, phone photos browsed, scrub clean. ⚪ SSH admin to the real NAS (M3n), folder picker by hand |
 
 ## Build order and why
 
 ```
- protocol ─► core + server + cli ─► nas ─► mobile ─► desktop
+ protocol ─► core + server + cli ─► nas ─► mobile ─► dart_client ─► desktop
 ```
 
 | Order | Reason |
@@ -50,7 +50,7 @@ been shown. Code alone doesn't count.
 | protocol first | Everyone depends on it |
 | server + cli together | They test each other; no phone needed |
 | nas before mobile | The phone needs a real server to back up to |
-| desktop last | It's the cli plus a UI, cheap once core exists |
+| desktop last | The phone's Dart client plus a wide UI, cheap once dart_client exists (D-040) |
 
 ## Later (parked on purpose)
 
