@@ -6,18 +6,25 @@ import 'package:path_provider/path_provider.dart';
 
 import 'app/app_start.dart';
 import 'app/providers.dart';
+import 'backup/background.dart';
+import 'backup/backup_state_store.dart';
 import 'client/identity.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final identityStore = await IdentityStore.forApp();
   final documents = await getApplicationDocumentsDirectory();
+  final backupStore = await SqfliteBackupStateStore.openForApp();
+  await initializeBackgroundBackup();
   runApp(
     ProviderScope(
       overrides: [
         identityStoreProvider.overrideWithValue(identityStore),
         restoreFolderProvider.overrideWithValue(
           Directory('${documents.path}/restored'),
+        ),
+        backupStatusSourceProvider.overrideWith(
+          (ref) => appBackupStatusSource(ref, backupStore),
         ),
       ],
       child: const HaoTranNasApp(),
