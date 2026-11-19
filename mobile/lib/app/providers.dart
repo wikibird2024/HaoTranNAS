@@ -15,11 +15,17 @@
 /// path_provider calls: `main()` overrides them. Author: Hao Tran.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../backup/background.dart';
+import '../backup/backup_controller.dart';
+import '../backup/backup_runner.dart';
+import '../backup/backup_state_store.dart';
+import '../backup/media_source.dart';
 import '../client/address_book.dart' as address_book;
 import '../client/address_book.dart'
     show
@@ -75,6 +81,53 @@ final backupStatusSourceProvider = Provider<BackupStatusSource>((ref) {
   ref.onDispose(source.dispose);
   return source;
 });
+
+/// The real backup side over [store]; `main()` overrides
+/// [backupStatusSourceProvider] with it. Foreground runs may use mDNS;
+/// the background job uses cached addresses only (D-012).
+BackupStatusSource appBackupStatusSource(Ref ref, BackupStateStore store) {
+  final log = ref.read(sessionLogProvider);
+  final controller = BackupController(
+    runner: BackupRunner(
+      mediaSource: PhotoManagerMediaSource(),
+      stateStore: store,
+      connect: () async {
+        final identity = await ref.read(identityProvider.future);
+        if (identity == null) {
+          throw const BackupConnectFailed('This phone is not paired.');
+        }
+        final found = await ref.read(serverFinderProvider)(
+          pinnedFingerprintPrefix: fingerprintPrefix(identity.serverCertSha256),
+        );
+        return connectPairedOrThrow(
+          ref.read(addressBookProvider),
+          identity,
+          discovered: [
+            for (final server in found)
+              address_book.DiscoveredServer(
+                ServerAddress(server.ipv4Address.address, server.port),
+                server.fingerprintPrefix,
+              ),
+          ],
+        );
+      },
+    ),
+    stateStore: store,
+    scheduler: WorkmanagerBackupScheduler(
+      clientSoftware: appClientSoftware,
+      deviceName: ref.read(deviceNameProvider),
+    ),
+    log: log.note,
+  );
+  final source = BackupControllerStatusSource(controller);
+  unawaited(controller.start());
+  ref.onDispose(() {
+    controller.stop();
+    source.dispose();
+    controller.dispose();
+  });
+  return source;
+}
 
 // ── Identity ──────────────────────────────────────────────────────────
 
