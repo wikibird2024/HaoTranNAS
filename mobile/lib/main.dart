@@ -1,20 +1,42 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
-void main() => runApp(const HaoTranNasApp());
+import 'app/app_start.dart';
+import 'app/providers.dart';
+import 'client/identity.dart';
 
-/// Placeholder until the pairing and status screens exist (lib/ui/).
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final identityStore = await IdentityStore.forApp();
+  final documents = await getApplicationDocumentsDirectory();
+  runApp(
+    ProviderScope(
+      overrides: [
+        identityStoreProvider.overrideWithValue(identityStore),
+        restoreFolderProvider.overrideWithValue(
+          Directory('${documents.path}/restored'),
+        ),
+      ],
+      child: const HaoTranNasApp(),
+    ),
+  );
+}
+
+/// Material 3, plain Navigator; the first screen is [AppStart].
 class HaoTranNasApp extends StatelessWidget {
   const HaoTranNasApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'HaoTranNAS',
-      theme: ThemeData(colorSchemeSeed: Colors.teal),
-      home: Scaffold(
-        appBar: AppBar(title: const Text('HaoTranNAS')),
-        body: const Center(child: Text('Backup to my own server: coming soon')),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'HaoTranNAS',
+    theme: ThemeData(colorSchemeSeed: Colors.teal),
+    darkTheme: ThemeData(
+      colorSchemeSeed: Colors.teal,
+      brightness: Brightness.dark,
+    ),
+    home: const AppStart(),
+  );
 }
