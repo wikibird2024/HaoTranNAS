@@ -483,8 +483,8 @@ fn new_phone_lists_and_downloads_the_old_phones_files_even_after_revoke() {
     );
     restore_to_new_phone("restored.jpg");
 
-    // The old phone is lost: revoked, hidden from ListDevices, its files
-    // still restorable by id (D-025).
+    // The old phone is lost: revoked (D-025), still listed by ListDevices
+    // (D-031) so the new phone can find it, its files still restorable.
     let revoke = run_server_command(&[
         OsStr::new("devices"),
         OsStr::new("--data-dir"),
@@ -498,8 +498,9 @@ fn new_phone_lists_and_downloads_the_old_phones_files_even_after_revoke() {
     let Message::DeviceList { devices } = reply else {
         panic!("expected DeviceList, got {reply:?}");
     };
-    assert_eq!(devices.len(), 1);
-    assert_eq!(devices[0].device_id, new_device_id);
+    let listed_ids: Vec<u64> = devices.iter().map(|device| device.device_id).collect();
+    assert!(listed_ids.contains(&new_device_id), "{listed_ids:?}");
+    assert!(listed_ids.contains(&old_device_id), "{listed_ids:?}");
     restore_to_new_phone("restored-after-revoke.jpg");
 }
 

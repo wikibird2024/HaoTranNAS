@@ -234,7 +234,7 @@ repair path.
 
 | Message | Rule |
 |---|---|
-| ListDevices | Every paired device; `is_caller` marks the asking one |
+| ListDevices | Every paired device, revoked ones included (D-031); `is_caller` marks the asking one |
 | ListDir | `max_entries` 1 ..= 1000, else `BAD_ARGUMENT`. Unknown device → `NOT_FOUND`. Path "" = root; otherwise path rules apply (`BAD_PATH`) |
 | | Shows the direct children of `path` from the latest version of each file. Directories are implied by file paths. Sorted by name, byte-wise ascending. Only names `> start_after` (byte-wise). `has_more` = more entries exist after this page |
 | | Directory entry: `size_bytes 0`, `modified_time_ms 0`, `version_id 0`. If a name is both a file and a directory (changed over time), the directory is shown |

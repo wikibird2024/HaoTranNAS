@@ -1,7 +1,8 @@
 //! Browse (spec §9): `ListDevices` → `DeviceList`, `ListDir` → `DirEntries`.
 //!
 //! ```text
-//!  ListDevices  every device not revoked, by id; is_caller marks the asker
+//!  ListDevices  every device, revoked ones included (D-031), by id;
+//!               is_caller marks the asker
 //!  ListDir      max_entries 1..=1000 (BAD_ARGUMENT) ─► device 0 = caller,
 //!               unknown device (NOT_FOUND) ─► path "" = root, else path
 //!               rules (BAD_PATH) ─► one page from the catalog; a non-root
@@ -26,10 +27,9 @@ pub type ReadError = (ErrorCode, String);
 
 /// Answers `ListDevices`.
 ///
-/// "Every paired device" (spec §9) is read as every device that may still
-/// connect: revoked devices (D-025) are left out. Their backups stay
-/// readable by id (`ListDir`/`ReadFile` accept a revoked device's id) and
-/// through the offline `restore` command.
+/// "Every paired device" (spec §9) includes revoked ones (D-031): a lost
+/// phone is revoked (D-025), and the new phone must still find it here to
+/// restore its files with `ListDir`/`ReadFile`.
 pub async fn handle_list_devices(
     storage: &UploadStorage,
     caller_device_id: u64,
@@ -40,7 +40,6 @@ pub async fn handle_list_devices(
     .await?;
     let devices = devices
         .into_iter()
-        .filter(|device| device.revoked_at_ms.is_none())
         .map(|device| DeviceEntry {
             is_caller: device.device_id == caller_device_id,
             device_id: device.device_id,
@@ -231,7 +230,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_devices_marks_the_caller_and_hides_revoked_devices() {
+    async fn list_devices_marks_the_caller_and_keeps_revoked_devices() {
         let (_folder, storage) = open_test_storage();
         let tablet_id = storage
             .catalog_writer
@@ -262,6 +261,7 @@ mod tests {
             vec![
                 (DEV_DEVICE_ID, crate::data_folder::DEV_DEVICE_NAME, false),
                 (tablet_id, "tablet", true),
+                (lost_id, "lost", false),
             ]
         );
         assert_eq!(devices[1].paired_at_ms, 5);
