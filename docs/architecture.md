@@ -93,6 +93,17 @@ Offer, and the server's answer shows what is still missing.
 ## 6. Phone app (Flutter, `mobile/`)
 
 Same layering as Protocol Lab: **codec = pure bytes, Link = I/O, screens = glue.**
+Everything below the screens that is not Android-only lives in the shared
+package `dart_client/` (D-040), so the PC app (M7) runs the same client:
+
+```
+ dart_client/  protocol · core (Link, TLS, log) · discovery · client (pairing, upload,
+               download, identity, address book) · backup (runner, store, controller,
+               MediaSource interface) · text formatting · testing (fakes for tests)
+     ▲                                   ▲
+ mobile/  photo_manager source,      desktop/  (M7)
+          workmanager jobs, multicast lock, phone UI
+```
 
 ```
  Background job (workmanager plugin; Wi-Fi only, optional: only while charging; stops at 9 min)
@@ -287,16 +298,17 @@ it can never race an upload.
           tests against  │         │   tests against
            ┌─────────────┘         └──────────────┐
            ▼                                      ▼
- ┌──────────────────┐                 ┌──────────────────────────┐
- │ mobile           │                 │ core (Rust library)      │
- │ Flutter (Dart)   │                 │ framing, hashing, chunks,│
- │                  │                 │ TLS, session             │
- └────────┬─────────┘                 └──┬──────────┬──────────┬─┘
-          │                              ▼          ▼          ▼
-          │      TLS              ┌──────────┐ ┌─────────┐ ┌──────────┐
-          └──────────────────────►│ server   │ │ cli     │ │ desktop  │
-                                  │ daemon   │ │ (test)  │ │ (M7)     │
-                                  └────┬─────┘ └─────────┘ └──────────┘
+ ┌──────────────────────┐             ┌──────────────────────────┐
+ │ dart_client          │             │ core (Rust library)      │
+ │ Dart client logic    │             │ framing, hashing, chunks,│
+ │ (D-040)              │             │ TLS, session             │
+ └──┬────────────────┬──┘             └──┬──────────┬────────────┘
+    ▼                ▼                   ▼          ▼
+ ┌────────┐   ┌──────────┐ TLS    ┌──────────┐ ┌─────────┐
+ │ mobile │   │ desktop  │───────►│ server   │ │ cli     │
+ │ phone  │   │ PC (M7)  │        │ daemon   │ │ (test)  │
+ └───┬────┘   └──────────┘        └────┬─────┘ └─────────┘
+     └──────────────TLS───────────────►│
                                        │ runs on
                                        ▼
                               ┌───────────────────────────┐
@@ -309,11 +321,12 @@ it can never race an upload.
  HaoTranNAS/
    docs/       concepts, architecture, roadmap, decisions, conventions, research
    protocol/   spec.md + test vectors + vector generator
-   core/       Rust library shared by server, cli, desktop
+   core/       Rust library shared by server and cli
    server/     Rust daemon
    cli/        Rust test client
-   desktop/    PC app (M7)
-   mobile/     Flutter phone app (new; patterns copied from Protocol Lab)
+   dart_client/ Dart client logic shared by mobile and desktop (D-040)
+   desktop/    Flutter PC app (M7)
+   mobile/     Flutter phone app (patterns copied from Protocol Lab)
    nas/        host setup: ZFS, WireGuard, systemd, config
    e2e/        cli ⇄ server end-to-end tests
 ```

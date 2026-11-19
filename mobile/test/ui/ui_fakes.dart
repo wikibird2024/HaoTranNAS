@@ -8,13 +8,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:haotrannas_client/backup/backup_status_source.dart';
+import 'package:haotrannas_client/client/download_engine.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/client/pairing.dart';
+import 'package:haotrannas_client/client/server_address.dart';
+import 'package:haotrannas_client/protocol/messages.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
-import 'package:haotrannas_mobile/client/download_engine.dart';
-import 'package:haotrannas_mobile/client/identity.dart';
-import 'package:haotrannas_mobile/client/pairing.dart';
-import 'package:haotrannas_mobile/client/server_address.dart';
-import 'package:haotrannas_mobile/protocol/messages.dart';
-import 'package:haotrannas_mobile/ui/backup_status_source.dart';
 import 'package:haotrannas_mobile/ui/pairing_screen.dart';
 
 /// Fingerprint whose short id is `3F9A-C21B-77E0`.

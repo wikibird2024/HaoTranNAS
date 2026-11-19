@@ -24,3 +24,19 @@ class MulticastLock {
   Future<void> _setHeld(bool isHeld) =>
       _channel.invokeMethod<void>('multicastLock', {'hold': isHeld});
 }
+
+/// Holds the Wi-Fi multicast lock while [action] runs, and always releases
+/// it, also when [action] throws. If `hold()` throws (not Android, native
+/// side missing) [action] does not run and the error goes to the caller,
+/// who decides whether to discover without the lock.
+Future<T> withMulticastLock<T>(
+  MulticastLock lock,
+  Future<T> Function() action,
+) async {
+  await lock.hold();
+  try {
+    return await action();
+  } finally {
+    await lock.release();
+  }
+}

@@ -10,13 +10,20 @@ HaoTranNAS server, and lets me browse and download them. Design:
 
 ```
  lib/
-   protocol/   bytes ⇄ frames ⇄ messages   pure, no I/O, never throws on bad bytes
-   core/       Link (TCP, TLS, mDNS socket), hex, session log
-   discovery/  find the server (mDNS, else last known address)
-   client/     connection, chunker, upload, download, pairing
-   backup/     photo scan, local state (SQLite), background job
+   app/        start, providers (Riverpod)
+   backup/     photo source (photo_manager), background + "Back up now" jobs (workmanager)
+   core/       Wi-Fi multicast lock (Android channel)
    ui/         screens: glue only, never parse bytes
+
+ ../dart_client/ (shared with the PC app, D-040)
+   protocol/ core/ discovery/ client/ backup/ text/ testing/
 ```
+
+The API tables below name files as they were in this app: everything under
+`lib/protocol`, `lib/core` (except the multicast lock), `lib/discovery`,
+`lib/client` and `lib/backup` (except `background.dart` and
+`photo_media_source.dart`) is now in `dart_client/lib/`, with its tests in
+`dart_client/test/` (see [dart_client/README.md](../dart_client/README.md)).
 
 Rules kept from Protocol Lab: codec = pure (no I/O), Link = I/O, screens =
 glue; decoders never throw on bad bytes; byte formats are hand-written;
@@ -185,50 +192,17 @@ cd mobile
 flutter analyze
 flutter test                                   # everything
 flutter test --exclude-tags server,mdns        # what CI runs
-flutter test --tags server                     # needs a running haotrannas-server
-flutter test --tags mdns                       # needs a real LAN with multicast
 ```
 
 | Tests | What they check | Needs |
 |---|---|---|
-| `test/protocol/` | Codec against the golden vectors, fuzz | nothing |
-| `test/client/nas_connection_test.dart` | Handshake, request ids, queue, timeouts, keepalive, failures, log redaction; a scripted fake server on `FakeLink` (`test/client/fake_server.dart`) | nothing |
-| `test/client/chunker_test.dart` | Chunk hashes, file SHA-256 and `readChunk` against `protocol/vectors/chunking.json`; size helpers | nothing |
-| `test/client/upload_engine_test.dart` | Upload flow on a fake server with a chunk store (`fake_upload_server.dart`): order, dedup, already backed up, resume, cancel, re-offer, file changed, bad replies, typed errors, progress | nothing |
-| `test/core/tls_link_test.dart` | PEM wrap, pin logic; real TLS 1.3 on loopback with openssl-made certs: right pin, wrong pin, TOFU, client cert reaches the server, rejected client cert, SNI, unreachable, timeout, not TLS | `openssl` (else that group is skipped) |
-| `test/client/identity_test.dart` | Short id (spec example), fp prefix, key never printed, store round trip, file layout, damaged files | nothing |
-| `test/client/pairing_test.dart` | Pairing over a fake TLS connector: success, MITM check, short id, code format, error mapping, attempts left, connection problems | nothing |
-| `test/client/address_book_test.dart` | Candidate order, fallback, pin mismatch → next, maybe-not-paired stops, LAN address saved | nothing |
-| `test/client/download_engine_test.dart` | Download on a fake server (`fake_download_server.dart`): listing with paging, full download, chunk/file hash and size checks, cancel, NOT_FOUND, connection lost, never overwriting, restore under a free name | nothing |
 | `test/ui/` | Screens on fakes (`ui_fakes.dart`): pairing, status + settings, browse + restore, debug log; `ServerConnectionController` over the fake TLS connector | nothing |
 | `test/app/app_smoke_test.dart` | App starts on the pairing screen when not paired | nothing |
-| `test/backup/media_source_test.dart` | `mediaRemotePath`: Android paths, storage root, `\`, control characters, dots, long names keep their extension, too many parts, fallback; deterministic | nothing |
-| `test/backup/backup_state_store_test.dart` | Same contract for the memory and the SQLite store (ffi, system libsqlite3): CRUD, every column, values, run lock, reopen, schema | `libsqlite3` |
-| `test/backup/backup_runner_test.dart` | Runner on `FakeUploadServer` + temp-file library (`backup_fakes.dart`): first run all newest first, second run nothing, changed file, moved album, budget between files and inside a file then resume, cancel, per-item errors, connection lost, server offline, no access; verify: all fine, heals a lost chunk, CHUNKS_MISSING, deleted/changed skipped, order, budget | nothing |
-| `test/backup/backup_controller_test.dart` | Controller + `BackupStatusSource` adapter: notifications, activity, summaries saved and read back, busy (here or in background), stop, settings saved + rescheduled, schedule failure logged | nothing |
 | `test/backup/background_test.dart` | Schedule plan (unmetered, charging, off) and `runBackgroundBackup`: runs with the app's Hello names, offline, off, not paired, damaged identity, lock taken, unexpected error | nothing |
-| `test/integration/server_download_test.dart` (tag `server`) | Real server in TLS mode: pair, upload a small tree, list with paging, download every file and compare bytes | `NAS_TLS_SERVER_ADDR`, `NAS_TLS_DATA_DIR`, `NAS_SERVER_BIN`; skipped otherwise |
-| `test/integration/server_tls_test.dart` (tag `server`) | Real server in TLS mode: wrong code, pair → mTLS reconnect → ping → upload → already backed up, wrong pin, no cert → NOT_PAIRED, unknown cert refused | `NAS_TLS_SERVER_ADDR`, `NAS_TLS_DATA_DIR`, `NAS_SERVER_BIN`; skipped otherwise |
-| `test/integration/server_ping_test.dart` (tag `server`) | Hello → HelloOk(device 1) → 3 pings → Close over real TCP | a dev server; skipped when `NAS_SERVER_ADDR` is not set |
-| `test/integration/server_upload_test.dart` (tag `server`) | 3 MiB + 17 B upload, re-upload = already backed up, resume after cancel sends 3 of 5 chunks, same content at a new path sends 0; `haotrannas-server restore` gives the same bytes | a dev server (`NAS_SERVER_ADDR`); the restore check also needs `NAS_SERVER_BIN` and `NAS_DATA_DIR` |
+| `test/core/multicast_lock_test.dart` | The MainActivity multicast channel; `withMulticastLock` holds, releases on error, reports a failed hold | nothing |
 
-Against a real server (dev mode, plain TCP on 127.0.0.1):
-
-```bash
-NAS_SERVER_ADDR=127.0.0.1:47100 flutter test --tags server
-# plus the restore check (server binary and its --data-dir):
-NAS_SERVER_ADDR=127.0.0.1:47100 NAS_SERVER_BIN=../target/debug/haotrannas-server \
-  NAS_DATA_DIR=/tmp/htn-dev flutter test --tags server
-```
-
-Against a real server in TLS mode (`e2e/scripts/flutter_vs_server.sh`
-sets these; the server must allow pairing from 127.0.0.1):
-
-```bash
-NAS_TLS_SERVER_ADDR=127.0.0.1:47101 NAS_TLS_DATA_DIR=/tmp/htn-tls \
-  NAS_SERVER_BIN=../target/debug/haotrannas-server \
-  flutter test --tags server test/integration/server_tls_test.dart
-```
+The client tests (protocol, TLS, upload, download, backup runner, real
+server) run in `dart_client/`.
 
 ## Phone-only checks (manual)
 

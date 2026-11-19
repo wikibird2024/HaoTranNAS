@@ -13,11 +13,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:haotrannas_client/client/download_engine.dart';
+import 'package:haotrannas_client/protocol/messages.dart';
+import 'package:haotrannas_client/text/formatting.dart';
 
 import '../app/providers.dart';
-import '../client/download_engine.dart';
-import '../protocol/messages.dart';
-import 'formatting.dart';
 
 /// Entries asked for per ListDir page (the spec allows up to 1000; a
 /// smaller page shows the first rows sooner).

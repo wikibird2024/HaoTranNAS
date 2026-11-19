@@ -3,9 +3,9 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:haotrannas_client/core/log/session_log.dart';
+import 'package:haotrannas_client/protocol/messages.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
-import 'package:haotrannas_mobile/core/log/session_log.dart';
-import 'package:haotrannas_mobile/protocol/messages.dart';
 import 'package:haotrannas_mobile/ui/debug_log_screen.dart';
 
 import 'ui_fakes.dart';

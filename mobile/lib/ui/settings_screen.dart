@@ -6,9 +6,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:haotrannas_client/backup/backup_status_source.dart';
 
 import '../app/providers.dart';
-import 'backup_status_source.dart';
 import 'debug_log_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {

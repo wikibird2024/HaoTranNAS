@@ -4,15 +4,14 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:haotrannas_client/backup/backup_controller.dart';
+import 'package:haotrannas_client/backup/backup_runner.dart';
+import 'package:haotrannas_client/backup/backup_state_store.dart';
+import 'package:haotrannas_client/backup/backup_status_source.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/testing/backup_fakes.dart';
 import 'package:haotrannas_mobile/backup/background.dart';
-import 'package:haotrannas_mobile/backup/backup_controller.dart';
-import 'package:haotrannas_mobile/backup/backup_runner.dart';
-import 'package:haotrannas_mobile/backup/backup_state_store.dart';
-import 'package:haotrannas_mobile/client/identity.dart';
-import 'package:haotrannas_mobile/ui/backup_status_source.dart';
 import 'package:workmanager/workmanager.dart';
-
-import 'backup_fakes.dart';
 
 DeviceIdentity testIdentity() => DeviceIdentity(
   deviceId: 1,

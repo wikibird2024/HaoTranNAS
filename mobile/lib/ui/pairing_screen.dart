@@ -16,13 +16,13 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/client/pairing.dart';
+import 'package:haotrannas_client/client/server_address.dart';
+import 'package:haotrannas_client/discovery/discovery.dart';
+import 'package:haotrannas_client/protocol/limits.dart';
 
 import '../app/providers.dart';
-import '../client/identity.dart';
-import '../client/pairing.dart';
-import '../client/server_address.dart';
-import '../discovery/discovery.dart';
-import '../protocol/limits.dart';
 
 /// One open, unpaired connection that takes codes. [PairingSession]
 /// through [SessionPairingAttempt]; tests use a fake.

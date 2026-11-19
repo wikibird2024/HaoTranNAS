@@ -4,12 +4,31 @@ on:
   push:
     paths: &mobile_paths
       - "mobile/**"
+      - "dart_client/**"
       - "protocol/**"
       - ".github/workflows/mobile.yml"
   pull_request:
     paths: *mobile_paths
 
 jobs:
+  client:
+    name: Shared Dart client (analyze, tests)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: dart_client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      # server: needs a running haotrannas-server; mdns: needs a real LAN.
+      - run: flutter test --exclude-tags server,mdns
+
   mobile:
     name: Mobile (analyze, tests, APK)
     runs-on: ubuntu-24.04

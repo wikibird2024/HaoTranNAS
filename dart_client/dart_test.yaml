@@ -1,0 +1,7 @@
+tags:
+  server:
+    # Needs a running haotrannas-server; run with --tags server.
+    skip: false
+  mdns:
+    # Needs a real LAN with multicast (not CI); run with --tags mdns.
+    skip: false

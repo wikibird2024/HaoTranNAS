@@ -3,12 +3,12 @@
 // reason, disconnect, not paired. Author: Hao Tran.
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:haotrannas_client/client/address_book.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/client/server_address.dart';
+import 'package:haotrannas_client/testing/fake_tls_server.dart' as fake_tls;
 import 'package:haotrannas_mobile/app/providers.dart';
-import 'package:haotrannas_mobile/client/address_book.dart';
-import 'package:haotrannas_mobile/client/identity.dart';
-import 'package:haotrannas_mobile/client/server_address.dart';
 
-import '../client/fake_tls_server.dart' as fake_tls;
 import 'ui_fakes.dart';
 
 void main() {

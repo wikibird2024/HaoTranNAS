@@ -1,6 +1,6 @@
 # HaoTranNAS — Conventions
 
-Author: Hao Tran · Updated: 2026-11-18
+Author: Hao Tran · Updated: 2026-11-19
 
 The rules that keep every sub-project the same shape. If a rule blocks you,
 change it here first (with a row in `decisions.md`), then follow the new rule.
@@ -13,21 +13,22 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
 | `core/` | Framing, hashing, chunking, session state, TLS setup (Rust library) | Know about SQLite, disks paths or a UI |
 | `server/` | Listener, handlers, chunk store, catalog, background jobs | Contain protocol logic that belongs in `core` |
 | `cli/` | Command-line client for testing and scripting | Have features the server doesn't support yet |
-| `desktop/` | PC app (M7) | Re-implement anything `core` has |
-| `mobile/` | Flutter phone app | Change the wire format without changing `protocol/` first |
+| `dart_client/` | Dart client logic shared by the apps: codec, Link/TLS, discovery, pairing, upload/download, backup runner (D-040) | Contain UI or Android/desktop-only plugin code |
+| `desktop/` | Flutter PC app (M7): folder source, admin client, PC UI | Re-implement anything `dart_client` has |
+| `mobile/` | Flutter phone app: photo source, background jobs, phone UI | Change the wire format without changing `protocol/` first; hold logic the PC app also needs |
 | `nas/` | Host setup: ZFS, WireGuard, systemd, config, backup scripts | Contain application code |
 | `e2e/` | End-to-end tests: cli ⇄ server | Depend on a real phone |
 
 ## 2. Who may depend on whom
 
 ```
-            protocol            ← everyone reads the contract
+            protocol              ← everyone reads the contract
            ▲        ▲
            │        │
-         core     mobile
-        ▲  ▲  ▲
-        │  │  │
-   server cli desktop          e2e ──► cli + server (as programs)
+         core     dart_client
+        ▲    ▲     ▲       ▲
+        │    │     │       │
+   server   cli  mobile  desktop      e2e ──► cli + server (as programs)
 
    nas: no code dependencies; it runs the server
 ```
@@ -35,8 +36,8 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
 | Allowed | Forbidden |
 |---|---|
 | server → core → protocol | core → server |
-| cli / desktop → core | server → cli, or anything → desktop |
-| mobile → protocol | anything → mobile |
+| cli → core | server → cli, or anything → desktop |
+| mobile / desktop → dart_client → protocol | anything → mobile; dart_client → an app |
 
 ## 3. Protocol changes
 

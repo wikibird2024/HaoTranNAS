@@ -31,17 +31,19 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:haotrannas_client/backup/backup_controller.dart';
+import 'package:haotrannas_client/backup/backup_runner.dart';
+import 'package:haotrannas_client/backup/backup_state_store.dart';
+import 'package:haotrannas_client/backup/backup_status_source.dart';
+import 'package:haotrannas_client/backup/media_source.dart';
+import 'package:haotrannas_client/client/address_book.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/client/nas_connection.dart';
+import 'package:haotrannas_client/client/upload_engine.dart';
+import 'package:sqflite/sqflite.dart' show databaseFactory;
 import 'package:workmanager/workmanager.dart';
 
-import '../client/address_book.dart';
-import '../client/identity.dart';
-import '../client/nas_connection.dart';
-import '../client/upload_engine.dart';
-import '../ui/backup_status_source.dart';
-import 'backup_controller.dart';
-import 'backup_runner.dart';
-import 'backup_state_store.dart';
-import 'media_source.dart';
+import 'photo_media_source.dart';
 
 const backupTaskUniqueName = 'haotrannas-auto-backup';
 const backupTaskName = 'auto-backup';
@@ -208,7 +210,7 @@ Future<bool> _runFromPlugin(
   Map<String, dynamic>? inputData,
 ) async {
   final identityStore = await IdentityStore.forApp();
-  final stateStore = await SqfliteBackupStateStore.openForApp();
+  final stateStore = await SqfliteBackupStateStore.openForApp(databaseFactory);
   try {
     await runBackgroundBackup(
       taskName: taskName,

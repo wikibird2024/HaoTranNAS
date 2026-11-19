@@ -2,19 +2,20 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:haotrannas_client/backup/backup_state_store.dart';
+import 'package:haotrannas_client/client/identity.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart' show databaseFactory;
 
 import 'app/app_start.dart';
 import 'app/providers.dart';
 import 'backup/background.dart';
-import 'backup/backup_state_store.dart';
-import 'client/identity.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final identityStore = await IdentityStore.forApp();
   final documents = await getApplicationDocumentsDirectory();
-  final backupStore = await SqfliteBackupStateStore.openForApp();
+  final backupStore = await SqfliteBackupStateStore.openForApp(databaseFactory);
   await initializeBackgroundBackup();
   runApp(
     ProviderScope(

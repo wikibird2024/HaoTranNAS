@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Cross-language check: the Dart client (mobile/) against the real Rust
+# Cross-language check: the Dart client (dart_client/, used by the phone
+# and PC apps) against the real Rust
 # server (server/) on localhost: one dev-plain server and one TLS server.
 #
 # Author: Hao Tran
@@ -60,7 +61,7 @@ echo "TLS server at $NAS_TLS_SERVER_ADDR (pid $tls_server_pid)"
 
 # Dart server tests may also call `haotrannas-server restore` to check an
 # uploaded file byte for byte, so they get the binary and the data folder.
-cd mobile
+cd dart_client
 NAS_SERVER_ADDR="$NAS_SERVER_ADDR" \
     NAS_SERVER_BIN="$target_directory/debug/haotrannas-server" \
     NAS_DATA_DIR="$data_directory" \

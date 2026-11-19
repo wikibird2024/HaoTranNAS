@@ -12,7 +12,7 @@ One-repo learning project: phone/PC backup to a self-built server on a home NAS.
 
 ## Project facts
 
-- Sub-projects: `protocol core server cli desktop mobile nas e2e`; system docs live only in root `docs/`.
+- Sub-projects: `protocol core server cli dart_client desktop mobile nas e2e`; `dart_client` = Dart client logic shared by `mobile` and `desktop` (D-040); system docs live only in root `docs/`.
 - `protocol/spec.md` is the single source of truth for the wire format. Change it first, regenerate vectors (`python3 protocol/tools/gen_vectors.py`), then the Rust and Dart codecs. The spec wins over code.
 - Casing follows each language: Rust `snake_case`, Dart `lowerCamelCase` (files `snake_case.dart`), types `PascalCase`. Units go in names (`idle_timeout_ms`).
 - Phone app = Flutter (`mobile/`), patterns from Protocol Lab (`/mnt/storage/PERSONAL/Learning/Android-app-to-learn-protocol-and-communication`): codec pure, Link = I/O, decoders never throw.

@@ -13,11 +13,11 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:haotrannas_client/backup/backup_status_source.dart';
+import 'package:haotrannas_client/text/formatting.dart';
 
 import '../app/providers.dart';
-import 'backup_status_source.dart';
 import 'folders_screen.dart';
-import 'formatting.dart';
 
 class StatusScreen extends ConsumerStatefulWidget {
   const StatusScreen({super.key});

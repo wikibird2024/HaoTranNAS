@@ -9,11 +9,12 @@ environment:
 # Licenses checked 2026-11-18, all permissive (BSD, MIT, Apache-2.0):
 # see README.md "Packages". Check the license before adding one.
 dependencies:
-  collection: ^1.19.1
-  crypto: ^3.0.8
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.5.0
+  # Shared client logic (D-040).
+  haotrannas_client:
+    path: ../dart_client
   path_provider: ^2.1.6
   photo_manager: ^3.12.0
   sqflite: ^2.4.6

@@ -1,0 +1,24 @@
+name: haotrannas_client
+description: "HaoTranNAS client logic shared by the phone and the PC app: protocol codec, TLS link, discovery, pairing, upload/download, backup runner."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.13.5
+
+# Licenses checked 2026-11-18, all permissive (BSD, MIT, Apache-2.0).
+# No platform plugins with Android- or desktop-only code here (D-040).
+dependencies:
+  collection: ^1.19.1
+  crypto: ^3.0.8
+  flutter:
+    sdk: flutter
+  path_provider: ^2.1.6
+  sqflite_common: ^2.5.17
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  fake_async: ^1.3.3
+  sqflite_common_ffi: ^2.4.7

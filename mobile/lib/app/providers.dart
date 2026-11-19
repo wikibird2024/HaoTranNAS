@@ -20,28 +20,28 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import '../backup/background.dart';
-import '../backup/backup_controller.dart';
-import '../backup/backup_runner.dart';
-import '../backup/backup_state_store.dart';
-import '../backup/media_source.dart';
-import '../client/address_book.dart' as address_book;
-import '../client/address_book.dart'
+import 'package:haotrannas_client/backup/backup_controller.dart';
+import 'package:haotrannas_client/backup/backup_runner.dart';
+import 'package:haotrannas_client/backup/backup_state_store.dart';
+import 'package:haotrannas_client/backup/backup_status_source.dart';
+import 'package:haotrannas_client/client/address_book.dart' as address_book;
+import 'package:haotrannas_client/client/address_book.dart'
     show
         AddressBook,
         PairedConnectFailed,
         PairedConnectFailureKind,
         PairedConnected;
-import '../client/download_engine.dart';
-import '../client/identity.dart';
-import '../client/nas_connection.dart';
-import '../client/pairing.dart';
-import '../client/server_address.dart';
-import '../core/log/session_log.dart';
+import 'package:haotrannas_client/client/download_engine.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/client/nas_connection.dart';
+import 'package:haotrannas_client/client/pairing.dart';
+import 'package:haotrannas_client/client/server_address.dart';
+import 'package:haotrannas_client/core/log/session_log.dart';
+import 'package:haotrannas_client/discovery/discovery.dart';
+
+import '../backup/background.dart';
+import '../backup/photo_media_source.dart';
 import '../core/transport/multicast_lock.dart';
-import '../discovery/discovery.dart';
-import '../ui/backup_status_source.dart';
 import '../ui/pairing_screen.dart';
 
 /// Sent in Hello (`client_software`).

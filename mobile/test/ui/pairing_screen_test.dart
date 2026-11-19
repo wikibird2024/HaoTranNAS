@@ -5,11 +5,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:haotrannas_client/client/identity.dart';
+import 'package:haotrannas_client/client/pairing.dart';
+import 'package:haotrannas_client/client/server_address.dart';
+import 'package:haotrannas_client/discovery/discovery.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
-import 'package:haotrannas_mobile/client/identity.dart';
-import 'package:haotrannas_mobile/client/pairing.dart';
-import 'package:haotrannas_mobile/client/server_address.dart';
-import 'package:haotrannas_mobile/discovery/discovery.dart';
 import 'package:haotrannas_mobile/ui/pairing_screen.dart';
 
 import 'ui_fakes.dart';
