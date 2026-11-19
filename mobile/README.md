@@ -149,6 +149,12 @@ Release signing uses the repo secrets `ANDROID_KEYSTORE_BASE64`,
 Without them the APK is signed with a throwaway debug key and CI shows a
 warning (that APK will not install over an earlier one).
 
+App icon (two NAS drives + a check, white on deep blue) comes from
+`tool/make_launcher_icon.py`: one shape that writes the adaptive vector icon
+(Android 8+, incl. the themed one-color icon) and the PNGs for Android 7.
+Edit the script and run `python3 tool/make_launcher_icon.py`, never the files
+it writes.
+
 ## Run
 
 ```bash
