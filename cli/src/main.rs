@@ -3,10 +3,13 @@
 //!
 //! M0: `ping --dev-plain` over plain TCP. M1/M2: `upload --dev-plain`. M3:
 //! `pair`, and `ping` / `upload` over mutual TLS with the saved identity.
+//! M5: `list` and `download`.
 
 mod connection;
 mod discover;
+mod download;
 mod identity;
+mod list;
 mod pair;
 mod ping;
 mod upload;
@@ -51,9 +54,9 @@ enum Command {
     /// Back up every file in a folder.
     UploadDir,
     /// List one folder of backed-up files.
-    List,
+    List(ListArgs),
     /// Download one backed-up file.
-    Download,
+    Download(DownloadArgs),
     /// Find servers on the LAN via mDNS.
     Discover(discover::DiscoverArgs),
 }
@@ -100,6 +103,40 @@ struct UploadArgs {
     dev_plain: bool,
 }
 
+#[derive(Debug, Args)]
+struct ListArgs {
+    /// Folder to list; the root when left out.
+    #[arg(default_value = "")]
+    remote_path: String,
+    /// Whose backup: a device id from the server (0 = this device).
+    #[arg(long = "device", value_name = "ID", default_value_t = 0)]
+    device_id: u64,
+    /// Plain TCP without TLS, for a server started with `run --dev-plain`.
+    #[arg(long)]
+    dev_plain: bool,
+}
+
+#[derive(Debug, Args)]
+struct DownloadArgs {
+    /// Backup path on the server.
+    remote_path: String,
+    /// Local file to write.
+    #[arg(long = "output", value_name = "FILE")]
+    output_path: PathBuf,
+    /// Whose backup: a device id from the server (0 = this device).
+    #[arg(long = "device", value_name = "ID", default_value_t = 0)]
+    device_id: u64,
+    /// Version id from `list` (0 = latest).
+    #[arg(long = "version", value_name = "ID", default_value_t = 0)]
+    version_id: u64,
+    /// Replace the output file if it exists.
+    #[arg(long)]
+    force: bool,
+    /// Plain TCP without TLS, for a server started with `run --dev-plain`.
+    #[arg(long)]
+    dev_plain: bool,
+}
+
 impl Command {
     /// The name typed on the command line.
     fn name(&self) -> &'static str {
@@ -108,8 +145,8 @@ impl Command {
             Self::Pair(_) => "pair",
             Self::Upload(_) => "upload",
             Self::UploadDir => "upload-dir",
-            Self::List => "list",
-            Self::Download => "download",
+            Self::List(_) => "list",
+            Self::Download(_) => "download",
             Self::Discover(_) => "discover",
         }
     }
@@ -127,6 +164,8 @@ fn main() -> ExitCode {
         Command::Ping(ping_args) => run_ping_command(&cli, ping_args),
         Command::Upload(upload_args) => run_upload_command(&cli, upload_args),
         Command::Pair(pair_args) => run_pair_command(&cli, pair_args),
+        Command::List(list_args) => run_list_command(&cli, list_args),
+        Command::Download(download_args) => run_download_command(&cli, download_args),
         Command::Discover(discover_args) => {
             // Same default identity folder as ping/upload/pair, so `(paired)` shows.
             let identity_directory = cli
@@ -135,7 +174,7 @@ fn main() -> ExitCode {
                 .or_else(identity::default_identity_directory);
             discover::run_discover_command(identity_directory.as_deref(), discover_args)
         }
-        other => {
+        other @ Command::UploadDir => {
             eprintln!("haotrannas-cli {}: not implemented yet", other.name());
             ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE)
         }
@@ -239,6 +278,62 @@ fn run_upload_command(cli: &Cli, upload_args: &UploadArgs) -> ExitCode {
         }
         Err(error) => {
             eprintln!("haotrannas-cli upload: {error:#}");
+            ExitCode::from(FAILURE_EXIT_CODE)
+        }
+    }
+}
+
+/// `list`: prints one line per entry of the folder (all pages).
+fn run_list_command(cli: &Cli, list_args: &ListArgs) -> ExitCode {
+    let (server_address, transport) = match connection_target(cli, "list", list_args.dev_plain) {
+        Ok(target) => target,
+        Err(exit_code) => return exit_code,
+    };
+    let Some(runtime) = start_runtime() else {
+        return ExitCode::from(FAILURE_EXIT_CODE);
+    };
+    let request = list::ListRequest {
+        device_id: list_args.device_id,
+        path: list_args.remote_path.clone(),
+    };
+    match runtime.block_on(list::run_list(&server_address, &transport, &request)) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("haotrannas-cli list: {error:#}");
+            ExitCode::from(FAILURE_EXIT_CODE)
+        }
+    }
+}
+
+/// `download`: gets one file, checked chunk by chunk and as a whole; prints
+/// one summary line.
+fn run_download_command(cli: &Cli, download_args: &DownloadArgs) -> ExitCode {
+    let (server_address, transport) =
+        match connection_target(cli, "download", download_args.dev_plain) {
+            Ok(target) => target,
+            Err(exit_code) => return exit_code,
+        };
+    let Some(runtime) = start_runtime() else {
+        return ExitCode::from(FAILURE_EXIT_CODE);
+    };
+    let request = download::DownloadRequest {
+        remote_path: download_args.remote_path.clone(),
+        output_path: download_args.output_path.clone(),
+        device_id: download_args.device_id,
+        version_id: download_args.version_id,
+        is_force: download_args.force,
+    };
+    match runtime.block_on(download::run_download(
+        &server_address,
+        &transport,
+        &request,
+    )) {
+        Ok(outcome) => {
+            println!("{}", outcome.summary_line(&request));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("haotrannas-cli download: {error:#}");
             ExitCode::from(FAILURE_EXIT_CODE)
         }
     }

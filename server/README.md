@@ -35,7 +35,7 @@ name and so does the pin check; TLS behaviour is unchanged. Stop with Ctrl-C or 
 | Command | Status | What it does |
 |---|---|---|
 | `init [--config F] [--data-dir D]` | 🟢 M0 | Makes D (0700): `tls/` identity, `index.sqlite`, `chunks/`, `tmp/`. Prints the server short id. Refuses if `D/tls` exists (and names the id it holds) |
-| `run [--config F] [--data-dir D] [--listen A]` | 🟢 M3 | TLS 1.3, mutual TLS (see "TLS mode" below). Prints one stdout line `listening on <ip>:<port>` (port 0 → the real port). Serves Hello, Ping, PairRequest and the upload requests. Browse and download requests get `Error INTERNAL "not implemented yet (milestone M1+)"` until M5 |
+| `run [--config F] [--data-dir D] [--listen A]` | 🟢 M3 | TLS 1.3, mutual TLS (see "TLS mode" below). Prints one stdout line `listening on <ip>:<port>` (port 0 → the real port). Serves Hello, Ping, PairRequest, the upload requests and (M5) browse and download |
 | `run ... --dev-plain` | 🟢 M0, M1/M2 | Plain TCP, loopback only, every connection is device 1 (see "Dev mode") |
 | `pair [--config F] [--data-dir D]` | 🟢 M3 | Asks the running server (admin socket) for a pairing code; prints one line and exits: `code 482913 · server id 3F9A-C21B-77E0 · valid 120 s`. Exit 1 if no server runs or it is in dev mode |
 | `devices [--config F] [--data-dir D] [--revoke N]` | 🟢 M3 | Lists devices, one line each: `<id> <name> paired <ms> [revoked <ms>]` (`no paired devices` when empty). `--revoke N`: device N's certificate is refused from now on; its backups stay restorable (D-025). Prints `revoked device N; its backups stay restorable` |
@@ -102,6 +102,33 @@ errors are not fatal: the connection stays open.
 
 Hashing and chunk files run in `spawn_blocking`. Idle time counts from the
 last reply, so a long Commit is not idle time.
+
+### Browse and download (spec §9, `src/handlers/{browse,download}.rs`)
+
+Ready only (paired, or dev mode). Errors are not fatal. `device_id 0` = the
+caller; another id must be a device row, revoked ones included (D-025:
+their backups stay restorable), else `NOT_FOUND`.
+
+| Request | Checks, in order → error | Reply |
+|---|---|---|
+| ListDevices | — | `DeviceList`: devices not revoked, by id; `is_caller` marks the asker |
+| ListDir | `max_entries` 1..=1000 → `BAD_ARGUMENT` · device → `NOT_FOUND` · path "" = root, else path rules → `BAD_PATH` · non-root folder with no children → `NOT_FOUND` | `DirEntries`: direct children of the latest version of each file, byte-wise by name, names `> start_after`, `has_more`; folders (size 0, mtime 0, version 0) win over a file of the same name |
+| ReadFile | device → `NOT_FOUND` · path rules → `BAD_PATH` · path / version (0 = latest) → `NOT_FOUND` | `FileManifest` |
+| ReadChunk | stored with status ok and used by a committed version → else `NOT_FOUND` | re-hash on the blocking pool: intact → `ChunkContent`; damaged or missing → marked bad (writer) → `NOT_FOUND`. Bad bytes never leave |
+
+How `ListDir` stays fast with 100k files in one folder
+(`catalog/reader.rs`, `FolderListing`): no folder table; it seeks in the
+existing `UNIQUE (device_id, path)` index of `files`. A folder `p` is the
+path range `["p/", "p0")` (`'0'` is the byte after `/`). The next child after
+name `A` is the first committed path in `(p/A, p/A/)`, else the first one
+`>= p/A0`, which jumps over A's whole subtree in one seek. Path order and
+name order differ only around bytes below `/` (`-`, `.`, space): folder `D`
+sorts after `D.txt` in path order, so shorter names are tried as folders
+(and a folder seen after `A` is skipped). Each entry costs about four
+`ORDER BY path LIMIT 1` seeks, whatever the folder size: a 1000-entry page of
+a 20 000-file folder takes ~140 ms in a debug build (test
+`list_directory_stays_fast_with_20k_files_in_one_folder`); a brute-force
+model test covers the ordering corner cases.
 
 ### Admin socket
 
