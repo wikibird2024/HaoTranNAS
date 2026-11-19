@@ -8,7 +8,7 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 
 ```
  Phase 0 ──► M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M6 ──► M7
-  done      done   done   done   done   ▲ HERE (wave 5: phone backup, browse + restore, scrub, verify)
+  done      done   done   done   done   ▲ HERE: M4–M6 code done and checked on the PC; phone + NAS checks open
 ```
 
 ## Phase 0: foundation
@@ -34,9 +34,9 @@ been shown. Code alone doesn't count.
 | M2 | Chunks + NeedChunks + Commit | core, server, cli, e2e, mobile | Chunking, idempotency, atomicity | e2e test: kill connection mid-upload, resume works, no duplicate chunks (`e2e/tests/m1_m2.rs`) | 🟢 2026-11-18 |
 | M3 | Pairing + mutual TLS + mDNS | core, server, cli, mobile | Trust, certificates | Unpaired client refused; paired client works (`e2e/tests/m3.rs`, `m3_pair.sh`); Dart app pairs + uploads over mTLS (`flutter_vs_server.sh`) | 🟢 2026-11-19 |
 | M3n | NAS host ready | nas | Linux admin, ZFS | Server runs as a service on the NAS; survives reboot | ⚪ |
-| M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | ⚪ |
-| M5 | Browse + download | server, mobile, cli | Read path | Restore a photo to the phone; hash matches | ⚪ |
-| M6 | Remote + upkeep: WireGuard, scrub, cleanup, phone "verify backup" | nas, server, mobile | Networking, data care | Backup works on 4G; scrub report clean; a corrupted chunk is repaired by verify | ⚪ |
+| M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | 🟡 code + 68 host tests 2026-11-19; phone check open (mobile/README phone checklist) |
+| M5 | Browse + download | server, mobile, cli | Read path | Restore a photo to the phone; hash matches | 🟡 Dart app downloads from the real server, bytes match (`flutter_vs_server.sh`, `m5_download.sh`) 2026-11-19; phone check open |
+| M6 | Remote + upkeep: WireGuard, scrub, cleanup, phone "verify backup" | nas, server, mobile | Networking, data care | Backup works on 4G; scrub report clean; a corrupted chunk is repaired by verify | 🟡 scrub, cleanup, heal by re-upload proven in `e2e/tests/m6.rs` 2026-11-19; 4G (WireGuard) + phone verify open |
 | M7 | Desktop app | desktop, core | Reusing core | PC folder backed up and restored | ⚪ |
 
 ## Build order and why

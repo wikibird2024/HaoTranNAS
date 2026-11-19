@@ -45,6 +45,8 @@ Rules:
 | D-032 | Phone backup runs newest first, with a time budget; a stopped run resumes by re-offering (the server keeps uploaded chunks) | New photos are safe first; WorkManager stops jobs after ~10 min | 🟢 | Users want "oldest first" for a first full backup |
 | D-033 | Phone keeps backup state, settings, last reports and a run lock in one SQLite file (no shared_preferences) | One atomic store that the app and the background job both open | 🟢 | Lock problems seen on a real phone |
 | D-034 | "Back up now" runs on any network; Wi-Fi only / charging only shape only the background job | A tap is an explicit request | 🟡 | Hao wants the tap to respect the settings |
+| D-035 | Scrub and cleanup run only inside the running server (admin `scrub-now`, `scrub-report`, `cleanup-now`); no offline mode | One catalog writer (D-020); an offline scrub would race a running server | 🟢 | Need to check a data folder while the server is stopped |
+| D-036 | Scrub is rate-limited (64 MiB/s, a constant); orphan chunk files (crash between row delete and file delete) are removed by a once-a-day pass after the 24 h grace | Uploads must not starve; walking every chunk file hourly is waste | 🟢 | Scrub too slow or too heavy on the real NAS disk |
 | D-025 | Revoking a device never deletes its backups: `devices.revoked_at_ms` marks it, a revoked cert is refused like an unknown one; `remove_device` stays only for devices with no backups | A lost phone must be locked out while its photos stay restorable | 🟢 | — |
 
 ## Open questions

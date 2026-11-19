@@ -148,10 +148,13 @@ Each layer only talks to the one below it.
   ├─ accept loop ──► spawn 1 session task per connection
   │                    read frame → handle → write reply (in order, v1)
   ├─ db writer task ◄── all SQLite writes go through one channel (no lock fights)
-  ├─ scrub task      weekly: re-hash every chunk, report bad ones
+  ├─ scrub task      every scrub_interval_hours: re-hash every chunk (≤ 64 MiB/s),
+  │                  mark bad / missing / repaired → <data_dir>/scrub-report.json
   ├─ cleanup task    hourly: delete uploads older than 24 h, temp files older than 1 h,
-  │                  chunks no committed version uses (after a 24 h grace)
-  └─ admin socket    <data_dir>/admin.sock: pair, devices list/remove, scrub-now
+  │                  chunks no committed version uses (after a 24 h grace);
+  │                  once a day: orphan chunk files with no catalog row (D-036)
+  └─ admin socket    <data_dir>/admin.sock: pair, devices list/remove,
+                     scrub-now, scrub-report, cleanup-now (D-035)
 ```
 
 ## 8. Protocol
