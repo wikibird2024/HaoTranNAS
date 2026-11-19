@@ -348,6 +348,8 @@ final class _Upload {
       try {
         final commitOk = await connection.request(
           Commit(uploadId: needChunks.uploadId),
+          // The server re-reads the whole file before CommitOk (D-030).
+          timeout: Duration(milliseconds: commitTimeoutMs(offer.sizeBytes)),
         ) as CommitOk;
         return UploadResult.uploaded(
           versionId: commitOk.versionId,

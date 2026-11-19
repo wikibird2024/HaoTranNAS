@@ -152,7 +152,8 @@ impl Announcement {
         Ok(Self { daemon, fullname })
     }
 
-    /// Escaped full name of the announced service.
+    /// Escaped full name of the announced service (used by the live test).
+    #[cfg(test)]
     pub fn fullname(&self) -> &str {
         &self.fullname
     }

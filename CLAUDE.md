@@ -18,7 +18,8 @@ One-repo learning project: phone/PC backup to a self-built server on a home NAS.
 - Phone app = Flutter (`mobile/`), patterns from Protocol Lab (`/mnt/storage/PERSONAL/Learning/Android-app-to-learn-protocol-and-communication`): codec pure, Link = I/O, decoders never throw.
 - Flutter: `/mnt/storage/HaoTran/sdk/flutter/bin` on PATH, `PUB_CACHE=/mnt/storage/HaoTran/sdk/pub-cache`. APKs are built only in GitHub CI.
 - Build/run/test commands live in each sub-project's `README.md`.
-- CI pins Rust 1.98.1 (= this PC's stable). Upgrade both on purpose. The root disk `/` is nearly full: keep build output, worktrees and SDKs on `/mnt/storage`; never add a `rust-toolchain.toml` that makes rustup download into `~/.rustup`.
+- CI pins Rust 1.98.1 (= this PC's stable). Upgrade both on purpose. Keep build output, worktrees and SDKs on `/mnt/storage`; never add a `rust-toolchain.toml` that makes rustup download into `~/.rustup`.
+- e2e tests are fsync-heavy: run them with `TMPDIR` on the root SSD (`/tmp`) when it has a few GB free. `/mnt/storage` is a slow disk for fsync (~280 ms each) and makes parallel e2e tests time out.
 
 ## Hard rules
 

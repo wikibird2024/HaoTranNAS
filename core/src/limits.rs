@@ -62,15 +62,46 @@ pub const MAX_PAIR_FAILURES_PER_WINDOW: u32 = 10;
 /// Time a client waits for a TCP connect before giving up.
 pub const CONNECT_TIMEOUT_MS: u64 = 3_000;
 
+/// Fixed part of the client's wait for `CommitOk` (spec §8, D-030).
+pub const COMMIT_TIMEOUT_BASE_MS: u64 = 30_000;
+
+/// Slowest re-hash speed a client allows for at `Commit`: the server
+/// re-reads every chunk, and a busy spinning disk can be this slow.
+pub const COMMIT_MIN_HASH_BYTES_PER_SECOND: u64 = 20 * 1_048_576;
+
+/// How long a client waits for `CommitOk` for a file of `size_bytes`:
+/// [`COMMIT_TIMEOUT_BASE_MS`] plus the time to re-read the file at
+/// [`COMMIT_MIN_HASH_BYTES_PER_SECOND`]. A fixed timeout would make every
+/// big file fail on a slow disk.
+#[must_use]
+pub fn commit_timeout_ms(size_bytes: u64) -> u64 {
+    let rehash_ms = size_bytes.saturating_mul(1_000) / COMMIT_MIN_HASH_BYTES_PER_SECOND;
+    COMMIT_TIMEOUT_BASE_MS.saturating_add(rehash_ms)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CHUNK_SIZE_BYTES, FRAME_HEADER_BYTES, HASH_BYTES, MAX_FRAME_LENGTH_BYTES};
+    use super::{
+        CHUNK_SIZE_BYTES, COMMIT_TIMEOUT_BASE_MS, FRAME_HEADER_BYTES, HASH_BYTES,
+        MAX_FRAME_LENGTH_BYTES, commit_timeout_ms,
+    };
 
     /// The largest `ChunkData` frame must fit in one frame.
     ///
     /// Layout: header, upload id (u64), chunk index (u32), hash, byte count
     /// (u32), chunk bytes. The length field does not count its own 4 bytes,
     /// hence the `+ 4` on the right side.
+    #[test]
+    fn commit_timeout_grows_with_the_file_size() {
+        assert_eq!(commit_timeout_ms(0), 30_000);
+        // 20 MiB takes one more second at the slowest allowed speed.
+        assert_eq!(commit_timeout_ms(20 * 1_048_576), 31_000);
+        // The largest file (64 GiB) gets about 55 minutes, not 30 seconds.
+        assert_eq!(commit_timeout_ms(64 * 1_073_741_824), 30_000 + 3_276_800);
+        // Never overflows, even for absurd sizes.
+        assert!(commit_timeout_ms(u64::MAX) > COMMIT_TIMEOUT_BASE_MS);
+    }
+
     #[test]
     fn largest_chunk_data_frame_fits_in_one_frame() {
         let upload_id_bytes = 8;

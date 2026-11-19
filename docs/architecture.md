@@ -259,7 +259,7 @@ it can never race an upload.
 | `CommitOk` lost | Phone re-offers; server answers "already have version N" | 🟢 |
 | Bit rot on disk | Scrub marks the chunk bad. Repaired by the ZFS mirror, or when a phone re-offers the file ("verify backup", M6) | 🟡 needs ZFS or verify |
 | Disk full | `Error(DiskFull)` before writing, nothing committed | 🟢 |
-| Stolen phone | Delete its row in `devices` → its cert is refused | 🟢 |
+| Stolen phone | `haotrannas-server devices --revoke <id>` → its cert is refused; its backups stay restorable (D-025) | 🟢 |
 
 ## 12. Sub-projects (one repo)
 

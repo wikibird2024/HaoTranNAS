@@ -158,9 +158,12 @@ final class NasClosed extends NasConnectionState {
 }
 
 final class _PendingRequest {
-  _PendingRequest(this.message);
+  _PendingRequest(this.message, [this.timeout]);
 
   final Message message;
+
+  /// Overrides the connection's request timeout for this one request.
+  final Duration? timeout;
   final completer = Completer<Message>();
   int requestId = 0;
   Timer? timeoutTimer;
@@ -284,7 +287,10 @@ class NasConnection {
   /// [NasFailure] when the connection ends first or the reply does not
   /// come within [requestTimeout] (which also closes the connection), and
   /// with [ArgumentError] when [message] cannot be encoded.
-  Future<Message> request(Message message) {
+  ///
+  /// [timeout] overrides [requestTimeout] for this request only (Commit of
+  /// a big file needs longer, see `commitTimeoutMs`).
+  Future<Message> request(Message message, {Duration? timeout}) {
     if (!_isClientRequest(message)) {
       throw ArgumentError.value(
         message.messageName,
@@ -294,7 +300,7 @@ class NasConnection {
     }
     final failure = _closedBy;
     if (failure != null) return Future.error(failure);
-    final pending = _PendingRequest(message);
+    final pending = _PendingRequest(message, timeout);
     _waiting.add(pending);
     _sendNext();
     return pending.completer.future;
@@ -330,7 +336,11 @@ class NasConnection {
     }
     final pending = _waiting.removeFirst();
     try {
-      _send(pending, requestTimeout, NasFailureKind.requestTimeout);
+      _send(
+        pending,
+        pending.timeout ?? requestTimeout,
+        NasFailureKind.requestTimeout,
+      );
     } on ArgumentError catch (error) {
       pending.completer.completeError(error);
       _sendNext();

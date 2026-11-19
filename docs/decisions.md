@@ -40,6 +40,7 @@ Rules:
 | D-028 | Loopback (127.0.0.0/8, ::1) may always pair, besides `pairing_networks` | Local access to the NAS already means full control; tests pair on localhost | 🟢 | — |
 | D-029 | Commit of an upload identical to the latest version (same size, time, hash, all chunks ok) returns that version instead of adding a duplicate | Closes the lost-CommitOk race found in wave 3 | 🟢 | — |
 | D-026 | Dev mode (`--dev-plain`, loopback only) uses a real `devices` row id 1 named `dev` with an all-zero cert hash; dev mode refuses a data folder that has real devices; TLS mode will refuse to start while the dev row exists | Uploads in M1/M2 need a real device row; no certificate hashes to all zeros, so no TLS client can ever match it | 🟢 | Wave 4 (TLS run) |
+| D-030 | Clients wait for `CommitOk` in proportion to the file size: 30 s + 1 s per 20 MiB (spec §8, §14); every other request keeps its fixed timeout | The server re-hashes the whole file before CommitOk; a fixed 10–30 s timeout made every big file fail on a slow disk (found when e2e tests ran on the slow `/mnt/storage` disk) | 🟢 | Real NAS disk speed measured |
 | D-025 | Revoking a device never deletes its backups: `devices.revoked_at_ms` marks it, a revoked cert is refused like an unknown one; `remove_device` stays only for devices with no backups | A lost phone must be locked out while its photos stay restorable | 🟢 | — |
 
 ## Open questions

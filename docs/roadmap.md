@@ -8,7 +8,7 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 
 ```
  Phase 0 ──► M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M6 ──► M7
-  done      done   done   done   ▲ HERE (wave 4: TLS, pairing, discovery)
+  done      done   done   done   done   ▲ HERE (wave 5: phone backup, browse + restore, scrub, verify)
 ```
 
 ## Phase 0: foundation
@@ -32,7 +32,7 @@ been shown. Code alone doesn't count.
 | M0 | Frames + Hello/Ping over plain TCP | protocol, core, server, cli, mobile | Framing, state machine, async | Unit tests pass; `cli ping` gets `Pong`; Dart client pings the Rust server (`e2e/scripts/flutter_vs_server.sh`) | 🟢 2026-11-18 |
 | M1 | Upload one small file (no resume) | core, server, cli, mobile | Hashing | Server file hash = source file hash (`e2e/scripts/m1_upload.sh`) | 🟢 2026-11-18 |
 | M2 | Chunks + NeedChunks + Commit | core, server, cli, e2e, mobile | Chunking, idempotency, atomicity | e2e test: kill connection mid-upload, resume works, no duplicate chunks (`e2e/tests/m1_m2.rs`) | 🟢 2026-11-18 |
-| M3 | Pairing + mutual TLS + mDNS | core, server, cli | Trust, certificates | Unpaired client refused; paired client works | ⚪ |
+| M3 | Pairing + mutual TLS + mDNS | core, server, cli, mobile | Trust, certificates | Unpaired client refused; paired client works (`e2e/tests/m3.rs`, `m3_pair.sh`); Dart app pairs + uploads over mTLS (`flutter_vs_server.sh`) | 🟢 2026-11-19 |
 | M3n | NAS host ready | nas | Linux admin, ZFS | Server runs as a service on the NAS; survives reboot | ⚪ |
 | M4 | Phone auto-backup (Flutter) | mobile | Android background work | New photo appears on server without a tap | ⚪ |
 | M5 | Browse + download | server, mobile, cli | Read path | Restore a photo to the phone; hash matches | ⚪ |

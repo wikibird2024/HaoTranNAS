@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:haotrannas_mobile/client/nas_connection.dart';
 import 'package:haotrannas_mobile/core/log/session_log.dart';
 import 'package:haotrannas_mobile/protocol/error_codes.dart';
+import 'package:haotrannas_mobile/protocol/limits.dart';
 import 'package:haotrannas_mobile/protocol/messages.dart';
 
 import 'fake_server.dart';
@@ -314,6 +315,37 @@ void main() {
           ),
         );
         expect(server.link.isClosed, isTrue);
+      });
+    });
+
+    test('a per-request timeout overrides requestTimeout (Commit, D-030)', () {
+      fakeAsync((async) {
+        final server = FakeServer();
+        late NasConnection connection;
+        openConnection(server).then((opened) => connection = opened);
+        async.flushMicrotasks();
+        server.answer = (_) => null;
+
+        // A 3 GiB file: the server re-reads it before CommitOk.
+        final commitTimeout = Duration(
+          milliseconds: commitTimeoutMs(3 * 1073741824),
+        );
+        Object? error;
+        connection
+            .request(const Commit(uploadId: 7), timeout: commitTimeout)
+            .then<void>((_) {}, onError: (Object caught) => error = caught);
+        // Well past the normal 30 s request timeout: still waiting.
+        async.elapse(const Duration(seconds: 120));
+        expect(error, isNull);
+        async.elapse(commitTimeout);
+        expect(
+          error,
+          isA<NasFailure>().having(
+            (failure) => failure.kind,
+            'kind',
+            NasFailureKind.requestTimeout,
+          ),
+        );
       });
     });
 

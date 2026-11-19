@@ -1,19 +1,35 @@
 //! One client connection: connect, say `Hello`, then one request at a time
 //! (v1 clients do not pipeline, spec section 3).
 //!
-//! Generic over the stream: plain TCP in dev mode now, TLS from M3 on.
+//! ```text
+//!  dev-plain: TCP ──────────────────────────────────────────► Hello ─► HelloOk
+//!  paired:    TCP ─► TLS 1.3 (server pinned by fingerprint,
+//!                    this device's cert) ──────────────────────► Hello ─► HelloOk
+//!               pin differs          → "server identity changed (expected …, got …)"
+//!               lost before HelloOk,
+//!               or NOT_PAIRED        → "this device is not paired (or was revoked)"
+//!  pairing:   TCP ─► TLS 1.3 (any server cert, fingerprint recorded) ─► Hello ─► …
+//! ```
+//!
+//! [`Connection`] is generic over the stream; the commands use a boxed one.
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use haotrannas_core::codec::decode_frame;
 use haotrannas_core::error_code::{CloseReason, ErrorCode};
+use haotrannas_core::fingerprint::CertFingerprint;
 use haotrannas_core::frame::FrameDecoder;
 use haotrannas_core::io::{FrameIoError, read_frame, write_frame};
 use haotrannas_core::limits::{CONNECT_TIMEOUT_MS, PROTOCOL_VERSION};
 use haotrannas_core::message::Message;
+use haotrannas_core::tls::{ClientIdentity, ServerPin, TofuRecorder, client_config, server_name};
+use rustls::{CertificateError, ClientConfig};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
 
 /// How long the cli waits for one reply before giving up.
 pub const REPLY_TIMEOUT_MS: u64 = 10_000;
@@ -36,6 +52,17 @@ pub enum ClientError {
     ReplyTimeout,
     /// A reply that breaks the protocol (wrong type or request id, bad bytes).
     BadReply(String),
+    /// TLS setup or handshake failed (not a pin mismatch).
+    Tls(String),
+    /// The server's certificate is not the pinned one.
+    ServerIdentityChanged {
+        expected_short_id: String,
+        /// What the server showed, if a second look could tell.
+        seen_short_id: Option<String>,
+    },
+    /// The server refused this device's certificate (unknown or revoked),
+    /// or ended the connection before `HelloOk` (spec §6: "maybe not paired").
+    NotPaired,
 }
 
 impl fmt::Display for ClientError {
@@ -58,11 +85,153 @@ impl fmt::Display for ClientError {
                 "no reply from the server within {REPLY_TIMEOUT_MS} ms"
             ),
             Self::BadReply(text) => write!(formatter, "bad reply from the server: {text}"),
+            Self::Tls(text) => write!(formatter, "TLS failed: {text}"),
+            Self::ServerIdentityChanged {
+                expected_short_id,
+                seen_short_id,
+            } => write!(
+                formatter,
+                "server identity changed (expected {expected_short_id}, got {}): this is not \
+                 the server this device paired with",
+                seen_short_id.as_deref().unwrap_or("unknown")
+            ),
+            Self::NotPaired => write!(formatter, "this device is not paired (or was revoked)"),
         }
     }
 }
 
 impl std::error::Error for ClientError {}
+
+/// Any stream a connection runs over (plain TCP or TLS).
+pub trait ClientStream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<Stream: AsyncRead + AsyncWrite + Unpin + Send> ClientStream for Stream {}
+
+/// A connection over plain TCP or TLS, as the commands use it.
+pub type AnyConnection = Connection<Box<dyn ClientStream>>;
+
+/// How to reach the server for `ping` and `upload`.
+#[derive(Debug, Clone)]
+pub enum Transport {
+    /// Plain TCP, for a server started with `run --dev-plain`.
+    DevPlain,
+    /// TLS to the paired server (pinned) with this device's certificate.
+    Paired {
+        server_fingerprint: CertFingerprint,
+        client_identity: ClientIdentity,
+    },
+}
+
+/// Connects, says `Hello` as `device_name` and returns the open connection.
+pub async fn open_connection(
+    server_address: &str,
+    transport: &Transport,
+    device_name: &str,
+) -> Result<AnyConnection, ClientError> {
+    match transport {
+        Transport::DevPlain => {
+            let stream = connect_plain(server_address).await?;
+            Connection::open(Box::new(stream) as Box<dyn ClientStream>, device_name).await
+        }
+        Transport::Paired {
+            server_fingerprint,
+            client_identity,
+        } => {
+            let config = client_config(
+                ServerPin::Fingerprint(*server_fingerprint),
+                Some(client_identity.clone()),
+            )
+            .map_err(|error| ClientError::Tls(error.to_string()))?;
+            let stream = match connect_tls(server_address, config).await {
+                Err(ClientError::ServerIdentityChanged { .. }) => {
+                    let seen = fetch_server_fingerprint(server_address).await;
+                    return Err(ClientError::ServerIdentityChanged {
+                        expected_short_id: server_fingerprint.short_id(),
+                        seen_short_id: seen.map(|fingerprint| fingerprint.short_id()),
+                    });
+                }
+                other => other?,
+            };
+            match Connection::open(Box::new(stream) as Box<dyn ClientStream>, device_name).await {
+                Err(ClientError::ServerError { code, .. })
+                    if code == ErrorCode::NotPaired.code() =>
+                {
+                    Err(ClientError::NotPaired)
+                }
+                // TLS 1.3: a refused client certificate shows up as a TLS
+                // alert or end of stream on the first read (spec §6).
+                Err(ClientError::ConnectionLost(text)) => {
+                    tracing::debug!(%text, "connection lost before HelloOk");
+                    Err(ClientError::NotPaired)
+                }
+                other => other,
+            }
+        }
+    }
+}
+
+/// Opens a pairing connection: TLS without a client certificate, any
+/// server certificate accepted and its fingerprint recorded (trust on
+/// first use). Returns the connection after `Hello` and the recorder.
+pub async fn open_pairing_connection(
+    server_address: &str,
+    device_name: &str,
+) -> Result<(AnyConnection, TofuRecorder), ClientError> {
+    let recorder = TofuRecorder::new();
+    let config = client_config(ServerPin::RecordFirstSeen(recorder.clone()), None)
+        .map_err(|error| ClientError::Tls(error.to_string()))?;
+    let stream = connect_tls(server_address, config).await?;
+    let connection =
+        Connection::open(Box::new(stream) as Box<dyn ClientStream>, device_name).await?;
+    Ok((connection, recorder))
+}
+
+/// TCP, then the TLS handshake, within `CONNECT_TIMEOUT_MS` each.
+async fn connect_tls(
+    server_address: &str,
+    config: Arc<ClientConfig>,
+) -> Result<TlsStream<TcpStream>, ClientError> {
+    let tcp_stream = connect_plain(server_address).await?;
+    let handshake = TlsConnector::from(config).connect(server_name(), tcp_stream);
+    tokio::time::timeout(Duration::from_millis(CONNECT_TIMEOUT_MS), handshake)
+        .await
+        .map_err(|_| {
+            ClientError::Tls(format!(
+                "{server_address}: no TLS handshake within {CONNECT_TIMEOUT_MS} ms"
+            ))
+        })?
+        .map_err(|error| {
+            if is_pin_mismatch(&error) {
+                ClientError::ServerIdentityChanged {
+                    expected_short_id: String::new(),
+                    seen_short_id: None,
+                }
+            } else {
+                ClientError::Tls(format!("{server_address}: {error}"))
+            }
+        })
+}
+
+/// True when the handshake failed because the server cert is not the
+/// pinned one (`PinnedServerVerifier` says `ApplicationVerificationFailure`).
+fn is_pin_mismatch(error: &std::io::Error) -> bool {
+    matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::InvalidCertificate(
+            CertificateError::ApplicationVerificationFailure
+        ))
+    )
+}
+
+/// The fingerprint the server at `server_address` shows now (a handshake
+/// only, for the "identity changed" message). `None` if that fails too.
+async fn fetch_server_fingerprint(server_address: &str) -> Option<CertFingerprint> {
+    let recorder = TofuRecorder::new();
+    let config = client_config(ServerPin::RecordFirstSeen(recorder.clone()), None).ok()?;
+    let _ = connect_tls(server_address, config).await;
+    recorder.seen_fingerprint()
+}
 
 /// What the server said in `HelloOk`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,11 +310,21 @@ impl<Stream: AsyncRead + AsyncWrite + Unpin> Connection<Stream> {
     /// Sends one request and returns its reply. `Error` and `Close` from the
     /// server become [`ClientError`]s.
     pub async fn request(&mut self, request: &Message) -> Result<Message, ClientError> {
+        self.request_with_timeout(request, Duration::from_millis(REPLY_TIMEOUT_MS))
+            .await
+    }
+
+    /// Like [`Self::request`], but waits up to `reply_timeout` (Commit of a
+    /// big file needs longer, see `commit_timeout_ms`).
+    pub async fn request_with_timeout(
+        &mut self,
+        request: &Message,
+        reply_timeout: Duration,
+    ) -> Result<Message, ClientError> {
         let request_id = self.take_request_id();
         write_frame(&mut self.stream, request, request_id)
             .await
             .map_err(|error| ClientError::ConnectionLost(error.to_string()))?;
-        let reply_timeout = Duration::from_millis(REPLY_TIMEOUT_MS);
         let frame = tokio::time::timeout(
             reply_timeout,
             read_frame(&mut self.stream, &mut self.decoder),

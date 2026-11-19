@@ -1,10 +1,14 @@
 //! `Hello` → `HelloOk`: checks the protocol version and tells the client
 //! whether it is paired on this connection (`device_id` 0 = not paired).
+//! A client certificate the catalog does not know (never paired, or
+//! revoked) gets `NOT_PAIRED` (fatal, spec §6).
 
 use haotrannas_core::error_code::ErrorCode;
 use haotrannas_core::limits::{CHUNK_SIZE_BYTES, MAX_FRAME_LENGTH_BYTES, PROTOCOL_VERSION};
 use haotrannas_core::message::Message;
 use haotrannas_core::session::SessionState;
+
+use crate::session::PeerIdentity;
 
 /// What the server says about itself in `HelloOk`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,12 +30,12 @@ impl ServerIdentity {
 }
 
 /// Answers `Hello`: the `HelloOk` reply and the next state, or the fatal
-/// `VERSION_MISMATCH`. `paired_device_id` is the device the connection's
-/// client certificate belongs to (in dev mode always device 1).
+/// `VERSION_MISMATCH` / `NOT_PAIRED`. `peer_identity` is what the client
+/// certificate said (in dev mode always device 1).
 pub fn handle_hello(
     protocol_version: u16,
     server_identity: &ServerIdentity,
-    paired_device_id: Option<u64>,
+    peer_identity: PeerIdentity,
 ) -> Result<(Message, SessionState), (ErrorCode, String)> {
     if protocol_version != PROTOCOL_VERSION {
         return Err((
@@ -41,6 +45,17 @@ pub fn handle_hello(
             ),
         ));
     }
+    let paired_device_id = match peer_identity {
+        PeerIdentity::Device(device_id) => Some(device_id),
+        PeerIdentity::NoCertificate => None,
+        PeerIdentity::UnknownCertificate => {
+            return Err((
+                ErrorCode::NotPaired,
+                "this device is not paired with this server (unknown or revoked certificate)"
+                    .to_owned(),
+            ));
+        }
+    };
     let reply = Message::HelloOk {
         protocol_version: PROTOCOL_VERSION,
         server_software: server_identity.server_software.clone(),
@@ -59,7 +74,8 @@ mod tests {
     #[test]
     fn paired_device_gets_its_id_and_ready() {
         let identity = ServerIdentity::new("attic".to_owned());
-        let (reply, state) = handle_hello(PROTOCOL_VERSION, &identity, Some(1)).unwrap();
+        let (reply, state) =
+            handle_hello(PROTOCOL_VERSION, &identity, PeerIdentity::Device(1)).unwrap();
         assert_eq!(state, SessionState::Ready);
         assert_eq!(
             reply,
@@ -77,16 +93,30 @@ mod tests {
     #[test]
     fn unpaired_client_gets_device_zero() {
         let identity = ServerIdentity::new("attic".to_owned());
-        let (reply, state) = handle_hello(PROTOCOL_VERSION, &identity, None).unwrap();
+        let (reply, state) =
+            handle_hello(PROTOCOL_VERSION, &identity, PeerIdentity::NoCertificate).unwrap();
         assert_eq!(state, SessionState::Unpaired);
         assert!(matches!(reply, Message::HelloOk { device_id: 0, .. }));
+    }
+
+    #[test]
+    fn unknown_certificate_is_not_paired() {
+        let identity = ServerIdentity::new("attic".to_owned());
+        let (code, _) = handle_hello(
+            PROTOCOL_VERSION,
+            &identity,
+            PeerIdentity::UnknownCertificate,
+        )
+        .unwrap_err();
+        assert_eq!(code, ErrorCode::NotPaired);
     }
 
     #[test]
     fn other_version_is_refused() {
         let identity = ServerIdentity::new("attic".to_owned());
         for version in [0, 2, u16::MAX] {
-            let (code, message) = handle_hello(version, &identity, Some(1)).unwrap_err();
+            let (code, message) =
+                handle_hello(version, &identity, PeerIdentity::Device(1)).unwrap_err();
             assert_eq!(code, ErrorCode::VersionMismatch);
             assert!(message.contains(&version.to_string()), "{message}");
         }

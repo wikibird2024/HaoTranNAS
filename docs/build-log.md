@@ -203,3 +203,40 @@ its checks passed again on `main`.
    `chunks/ab/cd/…` — each file name is the SHA-256 of its content.
    Check one: `sha256sum <file>` must print its own name.
 2. Run `cargo test -p haotrannas-e2e kill` and read what the crash test does step by step.
+
+## Wave 4 — M3: trust and discovery (2026-11-19)
+
+```
+ phone ──TLS (no cert)──► server        pair:  code from `haotrannas-server pair`
+   Hello ─► HelloOk(device 0)                  phone compares the server short id
+   PairRequest(code) ─► PairOk(cert + key) ─► Close(PAIRED_RECONNECT)
+ phone ──mutual TLS (its own cert, server pinned)──► Hello ─► HelloOk(device N) ─► upload
+
+ server ──mDNS──► "_haotrannas._tcp: port 47100, fp=<pin prefix>" ──► phone finds it
+```
+
+| Part | Proof |
+|---|---|
+| TLS server + pairing (spec §7) | 12 e2e tests: wrong code ×3 closes, 10 wrong codes lock, single-use code, expiry, foreign CA refused, wrong pin refused |
+| Revoke keeps backups (D-025) | Revoked phone gets NOT_PAIRED; its files still restore |
+| mDNS announce + `cli discover` | Live test on this PC next to avahi; Dart decodes the server's real packet |
+| Dart TLS + pairing | 10 real TLS 1.3 tests locally; **9/9 against the Rust TLS server** |
+
+### Lessons from wave 4
+
+| What happened | Lesson |
+|---|---|
+| Two independent TLS stacks (rustls, Dart/BoringSSL) agreed on the first try, because the design pinned *exactly* what each side checks (D-018) | A precise contract makes interop boring, which is good |
+| dart:io sends an IP address as SNI (the RFC says not to); rustls logs a warning per connection | Libraries break small rules; filter the noise, don't change security |
+| e2e tests timed out only on the slow disk. Cause: fsync ~280 ms under parallel load | The slow disk showed a **real bug**: a fixed `CommitOk` timeout fails every big file on a slow NAS disk. Fix: wait in proportion to file size (D-030) |
+| A merge conflict in `cli/src/main.rs` between two parallel lanes | Parallel work needs one person (the lead) who merges and re-checks everything |
+
+### Exercise
+
+1. `e2e/scripts/m3_pair.sh` and read each step it prints.
+2. Pair your own cli: start a TLS server (`haotrannas-server init` + `run`),
+   then `haotrannas-server pair --data-dir <dir>` and
+   `haotrannas-cli --server 127.0.0.1:<port> pair --code <code>`.
+   Look at `~/.config/haotrannas/server.json`: the pin is the SHA-256 of the
+   server certificate. Check it:
+   `openssl x509 -in <dir>/tls/server.crt -outform DER | sha256sum`.

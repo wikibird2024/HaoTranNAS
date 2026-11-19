@@ -5,27 +5,26 @@
 //!
 //! M0: `init` makes a data folder; `run --dev-plain` serves Hello and Ping
 //! over plain TCP on loopback. M1/M2: uploads (`FileOffer`, `ChunkData`, `Commit`)
-//! and the offline `restore`. TLS (`run` without `--dev-plain`) is M3.
+//! and the offline `restore`. M3: `run` in TLS mode (mutual TLS, pairing),
+//! and `pair` / `devices` talking to the running server over the admin socket.
 
 mod admin;
 // Storage pieces used by `init`, dev mode and uploads now; the rest of their
-// API is wired in by M3 (pairing, TLS), M5 (browse) and M6 (cleanup).
-#[allow(dead_code, reason = "full API wired in by M3/M5/M6")]
+// API is wired in by M5 (browse) and M6 (cleanup).
+#[allow(dead_code, reason = "full API wired in by M5/M6")]
 mod catalog;
 #[allow(dead_code, reason = "sweep_tmp is wired in by the cleanup job (M6)")]
 mod chunk_store;
-#[allow(dead_code, reason = "pairing_networks check wired in by M3")]
+#[allow(dead_code, reason = "scrub/cleanup intervals wired in by M6")]
 mod config;
 mod data_folder;
 mod handlers;
 mod jobs;
 mod listener;
-#[allow(dead_code, reason = "started by the TLS run path (M3)")]
 mod mdns;
 mod pairing;
 mod restore;
 mod session;
-#[allow(dead_code, reason = "TLS config and device certs wired in by M3")]
 mod tls_identity;
 
 use std::io::Write;
@@ -37,18 +36,24 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use clap::{Args, Parser, Subcommand};
-use haotrannas_core::limits::{HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, MAX_NAME_BYTES};
+use haotrannas_core::fingerprint::CertFingerprint;
+use haotrannas_core::limits::{
+    HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, MAX_NAME_BYTES, PAIRING_CODE_TTL_MS,
+};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
+use tokio_rustls::TlsAcceptor;
 
-use crate::admin::AdminSocket;
+use crate::admin::{AdminContext, AdminSocket, send_admin_command};
 use crate::config::ServerConfig;
 use crate::data_folder::{DEV_DEVICE_ID, DataFolder};
 use crate::handlers::hello::ServerIdentity;
-use crate::listener::{ConnectionLimit, is_dev_plain_address_allowed, serve_dev_plain};
+use crate::listener::{ConnectionLimit, ConnectionMode, is_dev_plain_address_allowed, serve};
+use crate::pairing::PairingService;
 use crate::restore::{RestoreRequest, restore_file};
 use crate::session::SessionSettings;
+use crate::tls_identity::TlsIdentity;
 
 /// Exit code for a failure (bad config, folder not initialized, bind failed).
 const FAILURE_EXIT_CODE: u8 = 1;
@@ -71,10 +76,10 @@ enum Command {
     Init(InitArgs),
     /// Start serving clients.
     Run(RunArgs),
-    /// Print a one-time pairing code for a new device.
-    Pair,
-    /// List or remove paired devices.
-    Devices,
+    /// Print a one-time pairing code for a new device (asks the running server).
+    Pair(PairArgs),
+    /// List paired devices, or revoke one (asks the running server).
+    Devices(DevicesArgs),
     /// Copy one backed-up file out of the store (offline).
     Restore(RestoreArgs),
     /// Re-hash every stored chunk now and report bad ones.
@@ -111,9 +116,28 @@ struct RunArgs {
     /// ("dev"). For tests up to M2; never on a network.
     #[arg(long)]
     dev_plain: bool,
-    /// Test only, `--dev-plain` only: handshake timeout instead of 10 000 ms.
+    /// Test only: handshake timeout (TLS handshake + Hello) instead of 10 000 ms.
     #[arg(long, hide = true)]
     handshake_timeout_ms: Option<u64>,
+    /// Test only, TLS mode: pairing code lifetime instead of 120 000 ms.
+    #[arg(long, hide = true, conflicts_with = "dev_plain")]
+    pairing_code_ttl_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+struct PairArgs {
+    #[command(flatten)]
+    config: ConfigArgs,
+}
+
+#[derive(Debug, Args)]
+struct DevicesArgs {
+    #[command(flatten)]
+    config: ConfigArgs,
+    /// Revoke this device: its certificate is refused from now on, its
+    /// backups stay restorable.
+    #[arg(long, value_name = "DEVICE_ID")]
+    revoke: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -143,19 +167,24 @@ impl Command {
         match self {
             Self::Init(_) => "init",
             Self::Run(_) => "run",
-            Self::Pair => "pair",
-            Self::Devices => "devices",
+            Self::Pair(_) => "pair",
+            Self::Devices(_) => "devices",
             Self::Restore(_) => "restore",
             Self::ScrubNow => "scrub-now",
         }
     }
 }
 
+/// Log filter when `RUST_LOG` is not set. rustls warns once per connection
+/// when a client sends an IP literal as SNI (dart:io does); rustls ignores
+/// the name and so does our pin check, so only its errors are shown.
+const DEFAULT_LOG_FILTER: &str = "info,rustls=error";
+
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -165,7 +194,9 @@ fn main() -> ExitCode {
         Command::Init(args) => run_init(&args),
         Command::Run(args) => run_server(&args),
         Command::Restore(args) => run_restore(&args),
-        other => {
+        Command::Pair(args) => run_pair(&args),
+        Command::Devices(args) => run_devices(&args),
+        other @ Command::ScrubNow => {
             eprintln!("haotrannas-server {}: not implemented yet", other.name());
             Ok(ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE))
         }
@@ -216,20 +247,55 @@ fn run_restore(args: &RestoreArgs) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `pair`: asks the running server for a pairing code.
+fn run_pair(args: &PairArgs) -> anyhow::Result<ExitCode> {
+    let config = load_config(&args.config)?;
+    let lines = send_admin_command(&config.data_directory, "pair")?;
+    let reply = lines.first().map_or("", String::as_str);
+    let words: Vec<&str> = reply.split(' ').collect();
+    let [
+        "code",
+        code,
+        "server-id",
+        server_id,
+        "valid",
+        valid_seconds,
+        "s",
+    ] = words.as_slice()
+    else {
+        bail!("unexpected reply from the server: {reply}");
+    };
+    println!("code {code} · server id {server_id} · valid {valid_seconds} s");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `devices`: lists the devices of the running server, or revokes one.
+fn run_devices(args: &DevicesArgs) -> anyhow::Result<ExitCode> {
+    let config = load_config(&args.config)?;
+    if let Some(device_id) = args.revoke {
+        send_admin_command(&config.data_directory, &format!("revoke {device_id}"))?;
+        println!("revoked device {device_id}; its backups stay restorable");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let lines = send_admin_command(&config.data_directory, "devices")?;
+    // The last line is `ok <n> devices`.
+    let device_lines = &lines[..lines.len() - 1];
+    if device_lines.is_empty() {
+        println!("no paired devices");
+    }
+    for line in device_lines {
+        println!("{line}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `run`: serve until SIGINT / SIGTERM.
 fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
-    if !args.dev_plain {
-        if args.handshake_timeout_ms.is_some() {
-            bail!("--handshake-timeout-ms is a test flag for --dev-plain only");
-        }
-        eprintln!("haotrannas-server run: TLS mode arrives in M3; use --dev-plain");
-        return Ok(ExitCode::from(NOT_IMPLEMENTED_EXIT_CODE));
-    }
     let mut config = load_config(&args.config)?;
     if let Some(listen_address) = args.listen {
         config.listen_address = listen_address;
     }
-    if !is_dev_plain_address_allowed(&config.listen_address) {
+    if args.dev_plain && !is_dev_plain_address_allowed(&config.listen_address) {
         bail!(
             "--dev-plain is plain TCP without encryption, so it listens on loopback only \
              (protocol/spec.md section 1), not {}. Use --listen 127.0.0.1:<port>",
@@ -250,25 +316,70 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
             data_folder.root_directory().display()
         );
     }
-    let dev_device_id = data_folder.ensure_dev_device()?;
+    // Both checks run before the catalog writer starts.
+    let tls_identity = if args.dev_plain {
+        None
+    } else {
+        Some(Arc::new(data_folder.prepare_tls_run()?))
+    };
+    let dev_device_id = if args.dev_plain {
+        Some(data_folder.ensure_dev_device()?)
+    } else {
+        None
+    };
     let (upload_storage, catalog_writer_thread) = data_folder.open_upload_storage()?;
+
+    let (connection_mode, pairing) = match (&tls_identity, dev_device_id) {
+        (Some(tls_identity), _) => {
+            let server_config = tls_identity
+                .server_config()
+                .context("cannot build the TLS server config")?;
+            let pairing = Arc::new(PairingService::new(
+                Arc::clone(tls_identity),
+                config.clone(),
+                args.pairing_code_ttl_ms.unwrap_or(PAIRING_CODE_TTL_MS),
+            ));
+            let mode = ConnectionMode::Tls {
+                acceptor: TlsAcceptor::from(server_config),
+                catalog_reader: upload_storage.catalog_reader.clone(),
+            };
+            (mode, Some(pairing))
+        }
+        (None, Some(dev_device_id)) => (ConnectionMode::DevPlain { dev_device_id }, None),
+        (None, None) => unreachable!("dev-plain mode always has the dev device"),
+    };
+    let connection_limit = ConnectionLimit::new(max_connections);
+    let admin_context = AdminContext {
+        connection_limit: connection_limit.clone(),
+        pairing: pairing.clone(),
+        catalog_reader: upload_storage.catalog_reader.clone(),
+        catalog_writer: upload_storage.catalog_writer.clone(),
+    };
     let settings = SessionSettings {
         server_identity: ServerIdentity::new(config.server_name.clone()),
         handshake_timeout_ms: args.handshake_timeout_ms.unwrap_or(HANDSHAKE_TIMEOUT_MS),
         idle_timeout_ms: IDLE_TIMEOUT_MS,
         upload_storage,
+        pairing,
     };
+    log_connection_mode(tls_identity.as_deref(), dev_device_id, &config);
+
+    // mDNS only in TLS mode (spec §13); dev-plain stays on loopback.
+    let mdns_setup = tls_identity
+        .as_ref()
+        .map(|identity| (config.clone(), identity.server_fingerprint()));
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("cannot start the async runtime")?;
-    let serve_outcome = runtime.block_on(serve_dev_plain_until_stopped(
+    let serve_outcome = runtime.block_on(serve_until_stopped(
         config.listen_address,
         data_folder.root_directory(),
-        dev_device_id,
+        connection_mode,
         settings,
-        max_connections,
+        admin_context,
+        mdns_setup,
     ));
     // Drops every task (and with them every catalog writer handle); a
     // blocking chunk write still running gets the grace time to finish.
@@ -282,14 +393,38 @@ fn run_server(args: &RunArgs) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// One log line saying which mode the server runs in and who may pair.
+fn log_connection_mode(
+    tls_identity: Option<&TlsIdentity>,
+    dev_device_id: Option<u64>,
+    config: &ServerConfig,
+) {
+    match (tls_identity, dev_device_id) {
+        (Some(tls_identity), _) => tracing::info!(
+            server_id = %tls_identity.server_fingerprint().short_id(),
+            "TLS mode: mutual TLS; pairing from {:?} and loopback",
+            config
+                .pairing_networks
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        ),
+        (None, dev_device_id) => tracing::warn!(
+            "dev-plain mode: plain TCP without encryption; every connection is device {} (dev)",
+            dev_device_id.unwrap_or(DEV_DEVICE_ID)
+        ),
+    }
+}
+
 /// Binds, prints `listening on <ip>:<port>`, serves, and stops cleanly on
 /// SIGINT / SIGTERM.
-async fn serve_dev_plain_until_stopped(
+async fn serve_until_stopped(
     listen_address: SocketAddr,
     data_directory: &Path,
-    dev_device_id: u64,
+    connection_mode: ConnectionMode,
     settings: SessionSettings,
-    max_connections: usize,
+    admin_context: AdminContext,
+    mdns_setup: Option<(ServerConfig, CertFingerprint)>,
 ) -> anyhow::Result<()> {
     // Signal handlers first, so a stop right after start is still clean.
     let mut interrupt = signal(SignalKind::interrupt()).context("cannot watch SIGINT")?;
@@ -301,22 +436,23 @@ async fn serve_dev_plain_until_stopped(
     let bound_address = listener.local_addr()?;
     let admin_socket = AdminSocket::bind(data_directory)?;
 
-    tracing::warn!(
-        "dev-plain mode: plain TCP without encryption; every connection is device {dev_device_id} (dev)"
-    );
     // The one stdout line tests and scripts wait for.
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "listening on {bound_address}")?;
     stdout.flush()?;
     drop(stdout);
 
+    // Kept until shutdown: dropping it sends the mDNS goodbye packets.
+    let _mdns_announcement = mdns_setup.as_ref().and_then(|(config, fingerprint)| {
+        mdns::start_if_enabled(config, bound_address.port(), fingerprint)
+    });
+
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let connection_limit = ConnectionLimit::new(max_connections);
-    let admin_task =
-        tokio::spawn(admin_socket.serve(connection_limit.clone(), shutdown_receiver.clone()));
-    let listener_task = tokio::spawn(serve_dev_plain(
+    let connection_limit = admin_context.connection_limit.clone();
+    let admin_task = tokio::spawn(admin_socket.serve(admin_context, shutdown_receiver.clone()));
+    let listener_task = tokio::spawn(serve(
         listener,
-        dev_device_id,
+        Arc::new(connection_mode),
         Arc::new(settings),
         connection_limit,
         shutdown_receiver,

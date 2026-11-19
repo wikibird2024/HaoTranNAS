@@ -20,6 +20,7 @@ first.
 | Test | `cargo test -p haotrannas-e2e` |
 | M0 check (`cli ping` gets `Pong`) | `e2e/scripts/m0_ping.sh` |
 | M1 check (restored hash = source hash) | `e2e/scripts/m1_upload.sh` |
+| M3 check (pair, ping, upload over mutual TLS, restore) | `e2e/scripts/m3_pair.sh` |
 | Lint | `cargo clippy -p haotrannas-e2e --all-targets -- -D warnings` |
 | Lint scripts | `shellcheck e2e/scripts/*.sh` |
 
@@ -28,6 +29,13 @@ first.
 | Helper | What it does |
 |---|---|
 | `DevServer::start()` | `init` on a fresh temp folder, then `run --dev-plain --listen 127.0.0.1:0`; parses the `listening on` line; SIGKILL on drop |
+| `DevServer::start_tls()` / `start_tls_with_args(&[...])` / `start_tls_on(dir)` | Same in TLS mode (`run` without `--dev-plain`) |
+| `DevServer::pairing_code()` / `pairing_code(dir)` | Runs `haotrannas-server pair` and parses `code … · server id … · valid … s` into `PairingCode` |
+| `cli_pair(addr, identity_dir, code, &[...])` | `haotrannas-cli --server addr --identity-dir D pair --code C ...` |
+| `cli_paired(identity_dir, Some(addr), &[...])` | Runs the cli with a saved pairing (TLS) |
+| `RawClient::connect_tls(addr, pin, identity)` | Raw frames over TLS 1.3 with the cli's settings; no cert = unpaired |
+| `load_client_identity(identity_dir)` | Cert + key the cli saved (to present them to another server) |
+| `restore_file_of_device(dir, id, path, out)` | `restore --device-id id` |
 | `DevServer::start_with_args(&[...])` | Same with extra `run` flags, e.g. `--handshake-timeout-ms 300` |
 | `DevServer::stop_gracefully(ms)` | SIGTERM, wait for exit |
 | `RawClient` | Plain TCP client that sends any bytes or frames and reads frames back (5 s read timeout) |
@@ -56,8 +64,9 @@ FileOffer / Ping before Hello → `UNEXPECTED_MESSAGE` · not-yet-built request
 → `INTERNAL`, connection stays · handshake timeout → `Close HANDSHAKE_TIMEOUT` ·
 two clients at once both get Pong · admin `status` counts connections ·
 SIGTERM → `Close SERVER_SHUTDOWN`, clean exit · `--dev-plain` refuses
-`0.0.0.0` · `run` without `--dev-plain` exits 2 · `init` twice refused with
-the server id · cli without `--dev-plain` exits 2 · cli to a closed port exits 1.
+`0.0.0.0` · TLS `run` on a missing folder exits 1 · `init` twice refused with
+the server id · cli without `--dev-plain` and without a pairing exits 1
+("not paired") · cli to a closed port exits 1.
 
 ## Tests (`tests/m1_m2.rs`)
 
@@ -69,23 +78,41 @@ the server id · cli without `--dev-plain` exits 2 · cli to a closed port exits
 | `lost_commit_ok_is_answered_with_the_existing_version` | `--drop-after-commit`, then `already backed up`; exactly 1 version in the catalog |
 | `server_killed_mid_upload_loses_nothing_and_the_upload_resumes` | Raw client: 2 chunks stored, 3rd half sent, SIGKILL; every chunk file hashes to its name; restart; cli sends exactly the 4 missing |
 | `server_killed_during_a_cli_upload_then_upload_again_completes` | SIGKILL while the real cli uploads 13 chunks; no version; restart; upload resumes and restore matches |
-| `corrupted_chunk_is_healed_by_the_next_upload` | Flip a byte + mark bad: restore refuses, re-offer lists it, upload replaces it, restore matches |
+| `corrupted_chunk_is_healed_by_the_next_upload` | Flip a byte + mark bad: restore refuses, re-offer lists it, upload replaces it, commit answers the healed version 1 (D-029, no duplicate), restore matches |
 | `wrong_file_hash_gets_file_hash_mismatch_and_the_upload_is_dropped` | `FILE_HASH_MISMATCH`, then `UNKNOWN_UPLOAD`; connection stays |
 | `upload_errors_have_their_codes_and_the_connection_stays` | `BAD_PATH`, `BAD_ARGUMENT`, `TOO_LARGE`, `UNKNOWN_UPLOAD`, `CHUNK_HASH_MISMATCH` ×2, `CHUNK_SIZE_WRONG`, `CHUNKS_MISSING`; Ping still works |
 | `two_clients_upload_different_files_at_once` | Two cli processes at once both commit; both restore |
 | `restore_refuses_to_overwrite_without_force` | Exit 1 and the file untouched; `--force` replaces it; unknown path exits 1 |
-| `cli_upload_needs_dev_plain_and_a_readable_file` | Exit 2 without `--dev-plain`, exit 1 for a missing file |
+| `cli_upload_needs_a_pairing_or_dev_plain_and_a_readable_file` | Exit 1 "not paired" without `--dev-plain` (empty identity folder), exit 1 for a missing file |
+
+## Tests (`tests/m3.rs`)
+
+| Test | Proves |
+|---|---|
+| `unpaired_tls_client_can_ping_but_not_offer_a_file` | TLS without a cert: `HelloOk device_id 0`, Ping works, FileOffer → `NOT_PAIRED` and the end |
+| `paired_cli_pings_uploads_and_restores_over_mutual_tls` | `pair --expect-server-id`, key file 0600, ping shows the device id, 3-chunk upload, restore byte-equal; the key is not in the server log |
+| `third_wrong_code_closes_the_connection` | `BAD_PAIRING_CODE` ×3, then the end; the window still works |
+| `ten_wrong_codes_across_connections_lock_the_window` | 3+3+3+1 wrong codes, then even the right code → `TOO_MANY_ATTEMPTS` (fatal); a new `pair` works |
+| `pairing_code_is_single_use` | Second pair with the same code → `PAIRING_NOT_OPEN`, nothing saved |
+| `expired_code_is_not_open` | `--pairing-code-ttl-ms 300`, wait → `PAIRING_NOT_OPEN` |
+| `wrong_expected_server_id_saves_nothing` | `--expect-server-id` mismatch → exit 1, no `server.json` |
+| `certificate_from_another_server_is_refused_and_the_pin_is_checked` | Another server's device cert → no HelloOk (first read fails); cli pinned to B, sent to A → `server identity changed (expected B, got A)` |
+| `revoked_device_is_refused_but_its_backups_restore` | `devices` lists it, `devices --revoke`, cli → "not paired (or was revoked)", listing shows `revoked`, restore still byte-equal |
+| `tls_run_refuses_a_data_folder_with_the_dev_device` | D-026 |
+| `admin_pair_needs_tls_mode` | `pair` on a dev-plain server → exit 1 |
+| `identical_uploads_racing_commit_to_one_version` | D-029: two uploads offered before either commit → same version id, 1 version |
 
 Disk use: up to ~100 MB at once under `$TMPDIR` while the tests run in
 parallel. Data folders need a short path (admin socket < 108 bytes).
 
 ## Scripts
 
-### `scripts/start_dev_server.sh <data-dir>` (for the Dart harness)
+### `scripts/start_dev_server.sh [--tls] <data-dir>` (for the Dart harness)
 
 Builds the server, runs `init` if `<data-dir>` is new, starts
-`run --dev-plain --listen 127.0.0.1:0` in the background and prints exactly
-two lines on stdout, then exits 0:
+`run --dev-plain --listen 127.0.0.1:0` (with `--tls`: `run --listen
+127.0.0.1:0`, TLS mode) in the background and prints exactly two lines on
+stdout, then exits 0:
 
 ```
 NAS_SERVER_ADDR=127.0.0.1:<port>
@@ -114,3 +141,19 @@ The M1 "Done when" check: builds, starts a dev server via
 `/dev/urandom`) with `haotrannas-cli upload`, stops the server, restores
 offline with `haotrannas-server restore`, then `cmp` and `sha256sum` must
 match. Prints `m1_upload: OK`.
+
+### `scripts/m3_pair.sh`
+
+The M3 pairing check: builds, `init` + TLS `run` via `start_dev_server.sh
+--tls`, `haotrannas-server pair`, `haotrannas-cli pair --expect-server-id`,
+`ping`, `upload` (2 MiB + 5 B), stops the server, restores offline with
+`--device-id`, `cmp`. Prints `m3_pair: OK`.
+
+### `scripts/flutter_vs_server.sh`
+
+Starts a dev-plain server and a TLS server on two temp folders and runs
+`flutter test --tags server` (in `mobile/`) with `NAS_SERVER_ADDR`,
+`NAS_DATA_DIR` (dev-plain, unchanged), `NAS_TLS_SERVER_ADDR`,
+`NAS_TLS_DATA_DIR` (TLS) and `NAS_SERVER_BIN`. The Dart tests get pairing
+codes with `$NAS_SERVER_BIN pair --data-dir $NAS_TLS_DATA_DIR`. Both servers
+are stopped and both folders removed on exit.

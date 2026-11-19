@@ -211,6 +211,12 @@ The short-id comparison by the user is the v1 defence; QR code or PAKE later.
 | | SHA-256 of the chunks in order = `file_sha256` | `FILE_HASH_MISMATCH` (upload dropped) |
 | | One transaction: file row (if new), version, version chunks; upload removed | — |
 
+**Waiting for `CommitOk`** (client timing, no byte change; D-030): before it
+answers, the server re-reads and re-hashes every chunk, which takes time in
+proportion to the file size. A client must wait at least
+`COMMIT_TIMEOUT_BASE_MS + size_bytes × 1000 / COMMIT_MIN_HASH_BYTES_PER_SECOND`
+milliseconds (30 s plus 1 s per 20 MiB) before it gives up on `CommitOk`.
+
 A client that loses `CommitOk` sends the same FileOffer again. The server answers
 with `existing_version_id`, so no duplicate version is made.
 
@@ -327,6 +333,8 @@ An unknown reason received is shown as `UNKNOWN(<reason>)`, not malformed.
 | MAX_PAIR_FAILURES_PER_CONNECTION | 3 |
 | MAX_PAIR_FAILURES_PER_WINDOW | 10 |
 | CONNECT_TIMEOUT_MS | 3 000 |
+| COMMIT_TIMEOUT_BASE_MS | 30 000 |
+| COMMIT_MIN_HASH_BYTES_PER_SECOND | 20 971 520 (20 MiB/s) |
 
 Component length (255 bytes) is a path rule, not a shared limit constant.
 

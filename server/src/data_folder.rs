@@ -1,5 +1,5 @@
-//! The data folder layout (docs/architecture.md section 9), `init`, and the
-//! dev device used by `run --dev-plain`.
+//! The data folder layout (docs/architecture.md section 9), `init`, the
+//! dev device used by `run --dev-plain`, and the checks before a TLS `run`.
 //!
 //! ```text
 //!  <data_dir>/            mode 0700
@@ -130,6 +130,30 @@ impl DataFolder {
         Ok((storage, writer_thread))
     }
 
+    /// Before a TLS `run`: migrates the catalog, refuses a folder that holds
+    /// the dev device (D-026: dev data must never be served on a network),
+    /// and loads the TLS identity made by `init`.
+    pub fn prepare_tls_run(&self) -> anyhow::Result<TlsIdentity> {
+        let database_path = self.database_path();
+        schema::open_writer_connection(&database_path)
+            .with_context(|| format!("cannot open the catalog {}", database_path.display()))?;
+        if CatalogReader::new(&database_path).has_device_with_cert(&DEV_DEVICE_CERT_SHA256)? {
+            bail!(
+                "{} was used with --dev-plain (it has the dev device). TLS mode refuses it: \
+                 dev uploads must never be served on a network. Use a fresh data folder \
+                 (`haotrannas-server init --data-dir <new folder>`)",
+                self.root_directory.display()
+            );
+        }
+        let tls_directory = self.tls_directory();
+        TlsIdentity::load(&tls_directory).with_context(|| {
+            format!(
+                "cannot load the TLS identity in {} (made by `haotrannas-server init`)",
+                tls_directory.display()
+            )
+        })
+    }
+
     /// Makes sure device row 1 is the dev device, adding it to an empty
     /// catalog. Refuses a catalog that holds real paired devices: dev mode
     /// must never act as a real phone.
@@ -215,6 +239,18 @@ mod tests {
             .unwrap();
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].name, DEV_DEVICE_NAME);
+    }
+
+    #[test]
+    fn tls_run_refuses_a_folder_with_the_dev_device() {
+        let parent = tempfile::tempdir().unwrap();
+        let folder = DataFolder::new(parent.path().join("data"));
+        let short_id = folder.initialize().unwrap();
+        let identity = folder.prepare_tls_run().unwrap();
+        assert_eq!(identity.server_fingerprint().short_id(), short_id);
+        folder.ensure_dev_device().unwrap();
+        let message = folder.prepare_tls_run().err().unwrap().to_string();
+        assert!(message.contains("--dev-plain"), "{message}");
     }
 
     #[test]

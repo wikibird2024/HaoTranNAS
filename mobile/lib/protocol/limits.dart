@@ -64,3 +64,16 @@ const int maxPairFailuresPerWindow = 10;
 
 /// Time allowed for the TCP connect to the server.
 const int connectTimeoutMs = 3000;
+
+/// Fixed part of the client's wait for `CommitOk` (spec §8, D-030).
+const int commitTimeoutBaseMs = 30000;
+
+/// Slowest re-hash speed a client allows for at `Commit`: the server
+/// re-reads every chunk, and a busy spinning disk can be this slow.
+const int commitMinHashBytesPerSecond = 20 * 1048576;
+
+/// How long a client waits for `CommitOk` for a file of [sizeBytes]: the
+/// base plus the time to re-read the file at the slowest allowed speed.
+/// A fixed timeout would make every big file fail on a slow disk.
+int commitTimeoutMs(int sizeBytes) =>
+    commitTimeoutBaseMs + sizeBytes * 1000 ~/ commitMinHashBytesPerSecond;

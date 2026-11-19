@@ -491,6 +491,8 @@ dependencies = [
  "anyhow",
  "haotrannas-core",
  "rusqlite",
+ "rustls",
+ "rustls-pki-types",
  "serde_json",
  "tempfile",
 ]
