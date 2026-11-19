@@ -116,6 +116,22 @@ exact replies.
 | `corrupt_chunk_fails_the_download_with_not_found_and_is_marked_bad` | One flipped byte in chunk 1 on disk → download exit 1 with `NOT_FOUND` at chunk 1, no output, no temp file; catalog status `bad`; the next upload repairs it and download works |
 | `chunk_only_in_an_uncommitted_upload_is_not_found` | `upload --stop-after-chunks 1`: the stored chunk (status ok) → `ReadChunk` `NOT_FOUND`; unknown hash → `NOT_FOUND`; root listing empty |
 
+## Tests (`tests/m6.rs`)
+
+Scrub and cleanup jobs. `haotrannas-server scrub-now` / `cleanup-now` /
+`scrub-report` talk to the running server; cleanup tests use the hidden
+`run` flags `--upload-expiry-ms` and `--unused-chunk-grace-ms 0`.
+
+| Test | Proves |
+|---|---|
+| `scrub_finds_a_flipped_byte_the_next_upload_heals_it_and_a_deleted_file_is_missing` | Clean scrub: 3 chunks, all bytes, 0 bad. One flipped byte → `bad_found 1`, catalog `bad`, `scrub-report` = same line. The same upload sends exactly that chunk (`uploaded 1 of 3`, version 1) → next scrub 0 bad. Deleted chunk file → `missing 1`. `scrub-report.json` matches; SIGTERM exit is clean |
+| `cleanup_deletes_what_nobody_needs_and_keeps_what_uploads_and_versions_use` | Expired upload (4 s) removed, its chunk removed (row and file), orphan chunk file removed, old `tmp/` junk swept, new junk kept; chunks of a committed version and of an open upload kept (the open upload still commits). `ReadChunk` of the removed chunk → `NOT_FOUND`, connection stays. Race order 2: the next offer lists the removed chunk missing, re-send, commit. Every file restores byte-equal |
+| `unused_chunk_offered_again_before_cleanup_is_kept` | Race order 1: chunk left unused by a `FILE_HASH_MISMATCH` drop, offered again (not missing) → `cleanup-now` keeps it → commit with no chunk sent, restore byte-equal |
+| `jobs_answer_in_tls_mode_and_errors_are_clear` | TLS mode: `scrub-report` before any scrub exits 1, `scrub-now` / `scrub-report` / `cleanup-now` work, clean stop; no server → "no running server" |
+
+The racing of both orders under real concurrency is a unit test
+(`catalog::writer::tests::offer_and_cleanup_racing_never_lose_a_chunk_the_offer_relies_on`).
+
 Disk use: up to ~100 MB at once under `$TMPDIR` while the tests run in
 parallel. Data folders need a short path (admin socket < 108 bytes).
 

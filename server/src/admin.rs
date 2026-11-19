@@ -3,7 +3,8 @@
 //! command line. `haotrannas-server pair` and `devices` are its clients.
 //!
 //! Line protocol: one command per line. Every reply is one line, except
-//! `devices` (one line per device, then `ok <n> devices`).
+//! `devices` (one line per device, then `ok <n> devices`) and `scrub-now`
+//! (`progress <n>` lines while it runs, then the result).
 //!
 //! | Command | Reply |
 //! |---|---|
@@ -11,9 +12,20 @@
 //! | `pair` | `code <6 digits> server-id <XXXX-XXXX-XXXX> valid <s> s` (TLS mode only) |
 //! | `devices` | `<id> <name> paired <ms> [revoked <ms>]` per device, then `ok <n> devices` |
 //! | `revoke <id>` | `ok revoked device <id>` |
+//! | `scrub-now` | `progress <chunks checked>` after each page of 256 chunks, then `ok scrub <summary>` |
+//! | `scrub-report` | the last finished scrub: `ok scrub <summary>` |
+//! | `cleanup-now` | `ok cleanup <summary>` (runs the orphan file pass too) |
 //! | anything else, or a failure | `error <text>` |
 //!
 //! The pairing code goes to the admin only; it is never logged.
+//!
+//! A scrub reads every chunk at most 64 MiB/s, so `scrub-now` can take
+//! hours on a big store: the `progress` lines show it is alive. If the
+//! client hangs up, the scrub goes on and saves its report. Only one scrub
+//! (and one cleanup) runs at a time; another request gets `error a scrub is
+//! already running`. A summary is `name value` pairs, see
+//! [`ScrubReport::summary_line`] and
+//! [`CleanupReport::summary_line`](crate::jobs::cleanup::CleanupReport::summary_line).
 
 use std::fs::{self, Permissions};
 use std::io::{self, BufRead, Write};
@@ -24,10 +36,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::catalog::reader::{CatalogReader, DeviceRecord};
 use crate::catalog::writer::{CatalogWriter, RevokeOutcome};
+use crate::jobs::BackgroundJobs;
+use crate::jobs::scrub::{self, ScrubReport};
 use crate::listener::ConnectionLimit;
 use crate::pairing::PairingService;
 
@@ -72,6 +86,8 @@ pub struct AdminContext {
     pub pairing: Option<Arc<PairingService>>,
     pub catalog_reader: CatalogReader,
     pub catalog_writer: CatalogWriter,
+    /// Scrub and cleanup, for `scrub-now` and `cleanup-now`.
+    pub jobs: Arc<BackgroundJobs>,
 }
 
 /// The bound admin socket. Removes its file when dropped.
@@ -167,7 +183,12 @@ async fn serve_admin_connection(stream: UnixStream, context: &AdminContext) -> i
                 .await?;
             return Ok(());
         }
-        let reply = answer_command(line.trim(), context).await;
+        let command = line.trim();
+        let reply = if command == "scrub-now" {
+            run_scrub_with_progress(&mut write_half, &context.jobs).await?
+        } else {
+            answer_command(command, context).await
+        };
         write_half.write_all(reply.as_bytes()).await?;
         write_half.write_all(b"\n").await?;
     }
@@ -197,7 +218,63 @@ async fn answer_command(command: &str, context: &AdminContext) -> String {
         (Some("revoke"), Some(device_id_text), None) => {
             revoke_device(&context.catalog_writer, device_id_text).await
         }
+        (Some("cleanup-now"), None, None) => match context.jobs.cleanup(true).await {
+            Ok(report) => {
+                report.log();
+                format!("ok cleanup {}", report.summary_line())
+            }
+            Err(error) => format!("error cleanup: {error}"),
+        },
+        (Some("scrub-report"), None, None) => scrub_report_reply(&context.jobs).await,
         _ => format!("error unknown command: {command}"),
+    }
+}
+
+/// `scrub-now`: runs a scrub, writing a `progress <n>` line after each
+/// page; returns the final reply. A write error (client gone) ends the
+/// connection, the scrub goes on in its own task.
+async fn run_scrub_with_progress(
+    write_half: &mut tokio::net::unix::OwnedWriteHalf,
+    jobs: &Arc<BackgroundJobs>,
+) -> io::Result<String> {
+    let (progress_sender, mut progress_receiver) = mpsc::unbounded_channel();
+    let scrub_jobs = Arc::clone(jobs);
+    let scrub_task = tokio::spawn(async move {
+        let outcome = scrub_jobs.scrub(Some(&progress_sender)).await;
+        if let Ok(report) = &outcome {
+            report.log();
+        }
+        outcome
+    });
+    // Ends when the scrub drops its sender.
+    while let Some(chunks_checked) = progress_receiver.recv().await {
+        write_half
+            .write_all(format!("progress {chunks_checked}\n").as_bytes())
+            .await?;
+    }
+    Ok(match scrub_task.await {
+        Ok(Ok(report)) => scrub_reply(&report),
+        Ok(Err(error)) => format!("error scrub: {error}"),
+        Err(join_error) => format!("error scrub task failed: {join_error}"),
+    })
+}
+
+/// `ok scrub <summary>`.
+fn scrub_reply(report: &ScrubReport) -> String {
+    format!("ok scrub {}", report.summary_line())
+}
+
+/// The `scrub-report` reply: the last saved report.
+async fn scrub_report_reply(jobs: &BackgroundJobs) -> String {
+    let data_directory = jobs.data_directory().to_owned();
+    match tokio::task::spawn_blocking(move || scrub::load_report(&data_directory)).await {
+        Ok(Ok(Some(report))) => scrub_reply(&report),
+        Ok(Ok(None)) => "error no scrub has finished yet (run scrub-now)".to_owned(),
+        Ok(Err(error)) => format!(
+            "error cannot read {}: {error}",
+            scrub::SCRUB_REPORT_FILE_NAME
+        ),
+        Err(join_error) => format!("error scrub report read failed: {join_error}"),
     }
 }
 
@@ -273,6 +350,16 @@ fn unix_time_ms() -> i64 {
 /// Client side (`haotrannas-server pair` / `devices`): sends one command to
 /// the running server on `data_directory` and returns the reply lines.
 pub fn send_admin_command(data_directory: &Path, command: &str) -> anyhow::Result<Vec<String>> {
+    send_admin_command_with_progress(data_directory, command, |_| {})
+}
+
+/// Like [`send_admin_command`]; `progress <n>` lines go to `on_progress` as
+/// they arrive (`scrub-now`) and are not in the returned lines.
+pub fn send_admin_command_with_progress(
+    data_directory: &Path,
+    command: &str,
+    mut on_progress: impl FnMut(&str),
+) -> anyhow::Result<Vec<String>> {
     use anyhow::Context;
 
     let socket_path = admin_socket_path(data_directory)?;
@@ -288,10 +375,14 @@ pub fn send_admin_command(data_directory: &Path, command: &str) -> anyhow::Resul
     stream
         .shutdown(std::net::Shutdown::Write)
         .context("cannot send the admin command")?;
-    let lines = io::BufReader::new(stream)
-        .lines()
-        .collect::<Result<Vec<_>, _>>()
-        .context("cannot read the admin reply")?;
+    let mut lines = Vec::new();
+    for line in io::BufReader::new(stream).lines() {
+        let line = line.context("cannot read the admin reply")?;
+        match line.strip_prefix("progress ") {
+            Some(progress_text) => on_progress(progress_text),
+            None => lines.push(line),
+        }
+    }
     if let Some(error_text) = lines.last().and_then(|line| line.strip_prefix("error ")) {
         anyhow::bail!("server says: {error_text}");
     }
@@ -309,7 +400,9 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     use super::*;
+    use crate::chunk_store::ChunkStore;
     use crate::config::ServerConfig;
+    use crate::jobs::JobSettings;
     use crate::tls_identity::TlsIdentity;
 
     struct TestAdmin {
@@ -329,12 +422,23 @@ mod tests {
                 PAIRING_CODE_TTL_MS,
             ))
         });
+        let jobs = Arc::new(BackgroundJobs::new(
+            Arc::new(ChunkStore::open(folder.path()).unwrap()),
+            catalog_writer.clone(),
+            CatalogReader::new(&database_path),
+            folder.path().to_owned(),
+            JobSettings {
+                scrub_max_bytes_per_second: 0,
+                ..JobSettings::from_config(&ServerConfig::default())
+            },
+        ));
         TestAdmin {
             context: AdminContext {
                 connection_limit: ConnectionLimit::new(4),
                 pairing,
                 catalog_reader: CatalogReader::new(&database_path),
                 catalog_writer,
+                jobs,
             },
             _folder: folder,
         }
@@ -467,5 +571,63 @@ mod tests {
         assert!(socket_path.exists());
         drop(socket);
         assert!(!socket_path.exists());
+    }
+
+    #[tokio::test]
+    async fn scrub_now_streams_progress_then_the_report() {
+        let admin = test_admin(false);
+        let context = &admin.context;
+        let data_directory = context.jobs.data_directory().to_owned();
+        assert!(
+            answer_command("scrub-report", context)
+                .await
+                .starts_with("error no scrub has finished yet")
+        );
+        // One stored chunk with a damaged file, no upload or version names
+        // it (so `cleanup-now` deletes it as unused).
+        let chunk_store = ChunkStore::open(&data_directory).unwrap();
+        let hash = haotrannas_core::chunker::ChunkHash::of_bytes(b"chunk");
+        chunk_store.put(&hash, b"chunk").unwrap();
+        context
+            .catalog_writer
+            .record_chunk(hash, 5, 1)
+            .await
+            .unwrap();
+        fs::write(chunk_store.path_for(&hash), b"chunK").unwrap();
+
+        let socket = AdminSocket::bind(&data_directory).unwrap();
+        let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+        let server = tokio::spawn(socket.serve(context.clone(), shutdown_receiver));
+        let client_directory = data_directory.clone();
+        let (progress_lines, reply) = tokio::task::spawn_blocking(move || {
+            let mut progress_lines = Vec::new();
+            let reply =
+                send_admin_command_with_progress(&client_directory, "scrub-now", |progress| {
+                    progress_lines.push(progress.to_owned());
+                })
+                .unwrap();
+            (progress_lines, reply)
+        })
+        .await
+        .unwrap();
+        assert_eq!(progress_lines, vec!["1".to_owned()]);
+        assert_eq!(reply.len(), 1, "{reply:?}");
+        assert!(
+            reply[0].starts_with(
+                "ok scrub chunks_checked 1 bytes_checked 5 bad_found 1 missing 0 repaired 0 "
+            ),
+            "{reply:?}"
+        );
+        assert_eq!(answer_command("scrub-report", context).await, reply[0]);
+
+        let cleanup_reply = answer_command("cleanup-now", context).await;
+        assert!(
+            cleanup_reply.starts_with(
+                "ok cleanup expired_uploads 0 tmp_files 0 unused_chunks 1 orphan_files 0 orphan_pass yes "
+            ),
+            "{cleanup_reply}"
+        );
+        shutdown_sender.send(true).unwrap();
+        server.await.unwrap();
     }
 }

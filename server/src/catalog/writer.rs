@@ -93,6 +93,16 @@ pub enum RevokeOutcome {
     NoSuchDevice,
 }
 
+/// What one `delete_unused_chunks` round did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UnusedChunksDeleted {
+    /// `chunks` rows deleted (each was unused and older than the grace).
+    pub row_count: u64,
+    /// Chunk files deleted after the rows. A file that could not be deleted
+    /// is an orphan now; the orphan pass removes it later.
+    pub file_count: u64,
+}
+
 /// Async handle to the writer thread. Clone it freely.
 #[derive(Debug, Clone)]
 pub struct CatalogWriter {
@@ -284,6 +294,51 @@ impl CatalogWriter {
         created_before_ms: i64,
     ) -> Result<u64, CatalogError> {
         self.run(move |connection| delete_expired_uploads(connection, created_before_ms))
+            .await
+    }
+
+    /// Marks a chunk 'ok' again if it is 'bad' (scrub found the file intact:
+    /// repaired by ZFS or replaced). Returns false when it was not 'bad'.
+    pub async fn mark_chunk_ok(&self, hash: ChunkHash) -> Result<bool, CatalogError> {
+        self.run(move |connection| mark_chunk_ok(connection, &hash))
+            .await
+    }
+
+    /// Cleanup (D-020), one round in ONE writer job: deletes up to
+    /// `max_count` unused chunk rows (no `version_chunks` and no
+    /// `upload_chunks` row) created before `created_before_ms`, commits, then
+    /// calls `remove_file` for each (true = a file was deleted). Every other
+    /// write waits meanwhile, so a `FileOffer` either comes first (its
+    /// `upload_chunks` row keeps the chunk) or after the files are gone (the
+    /// chunk is listed missing and the client re-sends it).
+    pub async fn delete_unused_chunks<RemoveFile>(
+        &self,
+        created_before_ms: i64,
+        max_count: usize,
+        remove_file: RemoveFile,
+    ) -> Result<UnusedChunksDeleted, CatalogError>
+    where
+        RemoveFile: FnMut(&ChunkHash) -> bool + Send + 'static,
+    {
+        self.run(move |connection| {
+            delete_unused_chunks(connection, created_before_ms, max_count, remove_file)
+        })
+        .await
+    }
+
+    /// Orphan files (a crash between the row delete and the file delete, or
+    /// a crash between a chunk write and its catalog row): in one writer
+    /// job, calls `remove_file` for each of `hashes` that still has no
+    /// `chunks` row. Returns how many files were deleted.
+    pub async fn delete_orphan_chunk_files<RemoveFile>(
+        &self,
+        hashes: Vec<ChunkHash>,
+        remove_file: RemoveFile,
+    ) -> Result<u64, CatalogError>
+    where
+        RemoveFile: FnMut(&ChunkHash) -> bool + Send + 'static,
+    {
+        self.run(move |connection| delete_orphan_chunk_files(connection, &hashes, remove_file))
             .await
     }
 }
@@ -711,6 +766,76 @@ pub fn delete_expired_uploads(
     Ok(u64::try_from(deleted_count).expect("row count fits in u64"))
 }
 
+/// See [`CatalogWriter::mark_chunk_ok`].
+pub fn mark_chunk_ok(connection: &mut Connection, hash: &ChunkHash) -> Result<bool, CatalogError> {
+    let changed_count = connection.execute(
+        "UPDATE chunks SET status = 'ok' WHERE hash = ?1 AND status = 'bad'",
+        [hash.0],
+    )?;
+    Ok(changed_count > 0)
+}
+
+/// See [`CatalogWriter::delete_unused_chunks`]. Rows first (one
+/// transaction), files after the commit: a crash in between leaves orphan
+/// files, never a row without its file.
+pub fn delete_unused_chunks(
+    connection: &mut Connection,
+    created_before_ms: i64,
+    max_count: usize,
+    mut remove_file: impl FnMut(&ChunkHash) -> bool,
+) -> Result<UnusedChunksDeleted, CatalogError> {
+    let max_sql_count = sql_integer(u64::try_from(max_count).unwrap_or(u64::MAX))?;
+    let transaction = connection.transaction()?;
+    let unused_hashes = {
+        let mut select = transaction.prepare_cached(
+            "SELECT hash FROM chunks
+             WHERE created_at_ms < ?1
+               AND NOT EXISTS (SELECT 1 FROM version_chunks WHERE chunk_hash = chunks.hash)
+               AND NOT EXISTS (SELECT 1 FROM upload_chunks WHERE chunk_hash = chunks.hash)
+             LIMIT ?2",
+        )?;
+        select
+            .query_map(params![created_before_ms, max_sql_count], |row| {
+                chunk_hash_from_row(row, 0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    {
+        let mut delete = transaction.prepare_cached("DELETE FROM chunks WHERE hash = ?1")?;
+        for hash in &unused_hashes {
+            delete.execute([hash.0])?;
+        }
+    }
+    transaction.commit()?;
+
+    let file_count = unused_hashes
+        .iter()
+        .filter(|hash| remove_file(hash))
+        .count();
+    Ok(UnusedChunksDeleted {
+        row_count: u64::try_from(unused_hashes.len()).expect("count fits in u64"),
+        file_count: u64::try_from(file_count).expect("count fits in u64"),
+    })
+}
+
+/// See [`CatalogWriter::delete_orphan_chunk_files`].
+pub fn delete_orphan_chunk_files(
+    connection: &mut Connection,
+    hashes: &[ChunkHash],
+    mut remove_file: impl FnMut(&ChunkHash) -> bool,
+) -> Result<u64, CatalogError> {
+    let mut has_row =
+        connection.prepare_cached("SELECT EXISTS (SELECT 1 FROM chunks WHERE hash = ?1)")?;
+    let mut removed_count = 0;
+    for hash in hashes {
+        let is_known: bool = has_row.query_row([hash.0], |row| row.get(0))?;
+        if !is_known && remove_file(hash) {
+            removed_count += 1;
+        }
+    }
+    Ok(removed_count)
+}
+
 /// A SQLite row id (always positive here) as a wire id.
 fn row_id_to_u64(row_id: i64) -> u64 {
     u64::try_from(row_id).expect("row ids are positive")
@@ -720,6 +845,7 @@ fn row_id_to_u64(row_id: i64) -> u64 {
 mod tests {
     use sha2::{Digest, Sha256};
 
+    use super::super::ChunkStatus;
     use super::super::reader::CatalogReader;
     use super::*;
 
@@ -1092,12 +1218,12 @@ mod tests {
         assert!(catalog.writer.mark_chunk_bad(hash).await.unwrap());
         assert_eq!(
             catalog.reader.chunk_status(&hash).unwrap(),
-            Some(super::super::ChunkStatus::Bad)
+            Some(ChunkStatus::Bad)
         );
         catalog.writer.record_chunk(hash, 7, NOW_MS).await.unwrap();
         assert_eq!(
             catalog.reader.chunk_status(&hash).unwrap(),
-            Some(super::super::ChunkStatus::Ok)
+            Some(ChunkStatus::Ok)
         );
     }
 
@@ -1374,5 +1500,288 @@ mod tests {
                 .is_none()
         );
         assert_eq!(count_rows(&catalog, "files"), 1);
+    }
+
+    /// Hashes `remove_file` was called with, shared with the writer thread.
+    type RemovedHashes = std::sync::Arc<std::sync::Mutex<Vec<ChunkHash>>>;
+
+    /// A `remove_file` that records the hash and says "deleted".
+    fn recording_remover(
+        removed: &RemovedHashes,
+    ) -> impl FnMut(&ChunkHash) -> bool + Send + 'static {
+        let removed = std::sync::Arc::clone(removed);
+        move |hash| {
+            removed.lock().unwrap().push(*hash);
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn only_old_unused_chunks_are_deleted() {
+        let catalog = open_test_catalog();
+        let device_id = add_test_device(&catalog, "phone").await;
+        let committed = offer_for("kept.bin", vec![hash_of(b"committed")], NOW_MS);
+        back_up(&catalog, device_id, &committed).await;
+        let open_upload = offer_for("open.bin", vec![hash_of(b"in upload")], NOW_MS);
+        catalog
+            .writer
+            .offer_file(device_id, open_upload.clone(), NOW_MS)
+            .await
+            .unwrap();
+        store_all_chunks(&catalog, &open_upload).await;
+        let (old_unused, young_unused) = (hash_of(b"old unused"), hash_of(b"young unused"));
+        catalog
+            .writer
+            .record_chunk(old_unused, 1, NOW_MS)
+            .await
+            .unwrap();
+        catalog
+            .writer
+            .record_chunk(young_unused, 1, NOW_MS + 10_000)
+            .await
+            .unwrap();
+
+        let removed = RemovedHashes::default();
+        let deleted = catalog
+            .writer
+            .delete_unused_chunks(NOW_MS + 1, 100, recording_remover(&removed))
+            .await
+            .unwrap();
+        assert_eq!(
+            deleted,
+            UnusedChunksDeleted {
+                row_count: 1,
+                file_count: 1
+            }
+        );
+        assert_eq!(*removed.lock().unwrap(), vec![old_unused]);
+        assert_eq!(catalog.reader.chunk_status(&old_unused).unwrap(), None);
+        for kept in [
+            committed.chunk_hashes[0],
+            open_upload.chunk_hashes[0],
+            young_unused,
+        ] {
+            assert_eq!(
+                catalog.reader.chunk_status(&kept).unwrap(),
+                Some(ChunkStatus::Ok)
+            );
+        }
+
+        // Rounds of at most `max_count`, until nothing is left.
+        for number in 0..5_u8 {
+            catalog
+                .writer
+                .record_chunk(hash_of(&[number]), 1, NOW_MS)
+                .await
+                .unwrap();
+        }
+        let first_round = catalog
+            .writer
+            .delete_unused_chunks(NOW_MS + 1, 3, |_| false)
+            .await
+            .unwrap();
+        assert_eq!((first_round.row_count, first_round.file_count), (3, 0));
+        let second_round = catalog
+            .writer
+            .delete_unused_chunks(NOW_MS + 1, 3, |_| true)
+            .await
+            .unwrap();
+        assert_eq!(second_round.row_count, 2);
+    }
+
+    /// Race order 1: the chunk is unused, then a `FileOffer` names it. The
+    /// offer's `upload_chunks` row keeps it, and the offer did not list it
+    /// missing, so it must stay.
+    #[tokio::test]
+    async fn chunk_offered_before_cleanup_is_kept() {
+        let catalog = open_test_catalog();
+        let device_id = add_test_device(&catalog, "phone").await;
+        let offer = offer_for("a.bin", vec![hash_of(b"was unused")], NOW_MS);
+        store_all_chunks(&catalog, &offer).await;
+        let outcome = catalog
+            .writer
+            .offer_file(device_id, offer.clone(), NOW_MS)
+            .await
+            .unwrap();
+        assert!(outcome.missing_indexes.is_empty(), "stored and ok");
+
+        let removed = RemovedHashes::default();
+        let deleted = catalog
+            .writer
+            .delete_unused_chunks(i64::MAX, 100, recording_remover(&removed))
+            .await
+            .unwrap();
+        assert_eq!(deleted.row_count, 0);
+        assert!(removed.lock().unwrap().is_empty());
+        catalog
+            .writer
+            .commit_upload(device_id, outcome.upload_id, NOW_MS)
+            .await
+            .unwrap();
+    }
+
+    /// Race order 2: cleanup deletes the chunk, then a `FileOffer` names
+    /// it: the offer lists it missing, so the client sends it again.
+    #[tokio::test]
+    async fn chunk_deleted_by_cleanup_is_listed_missing_by_the_next_offer() {
+        let catalog = open_test_catalog();
+        let device_id = add_test_device(&catalog, "phone").await;
+        let offer = offer_for("a.bin", vec![hash_of(b"unused")], NOW_MS);
+        store_all_chunks(&catalog, &offer).await;
+        let deleted = catalog
+            .writer
+            .delete_unused_chunks(i64::MAX, 100, |_| true)
+            .await
+            .unwrap();
+        assert_eq!(deleted.row_count, 1);
+        let outcome = catalog
+            .writer
+            .offer_file(device_id, offer.clone(), NOW_MS)
+            .await
+            .unwrap();
+        assert_eq!(outcome.missing_indexes, vec![0]);
+        assert!(matches!(
+            catalog
+                .writer
+                .commit_upload(device_id, outcome.upload_id, NOW_MS)
+                .await,
+            Err(CommitError::ChunksMissing)
+        ));
+    }
+
+    /// Both orders at once, many times: whoever wins, an offer that did not
+    /// list the chunk missing always finds its row kept, and a chunk cleanup
+    /// deleted is always listed missing. Even rounds spawn the offer first,
+    /// odd rounds the cleanup, so both orders really happen.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn offer_and_cleanup_racing_never_lose_a_chunk_the_offer_relies_on() {
+        let catalog = open_test_catalog();
+        let device_id = add_test_device(&catalog, "phone").await;
+        let mut cleaned_first_count = 0;
+        for round in 0..100_u32 {
+            let hash = hash_of(&round.to_le_bytes());
+            catalog.writer.record_chunk(hash, 1, NOW_MS).await.unwrap();
+            let offer = offer_for(&format!("f{round}.bin"), vec![hash], NOW_MS);
+            let removed = RemovedHashes::default();
+            let offer_writer = catalog.writer.clone();
+            let cleanup_writer = catalog.writer.clone();
+            let file_remover = recording_remover(&removed);
+            let offer_job = async move { offer_writer.offer_file(device_id, offer, NOW_MS).await };
+            let cleanup_job = async move {
+                cleanup_writer
+                    .delete_unused_chunks(i64::MAX, 100, file_remover)
+                    .await
+            };
+            let (offer_outcome, cleanup_outcome) = if round % 2 == 0 {
+                let offer_task = tokio::spawn(offer_job);
+                let cleanup_task = tokio::spawn(cleanup_job);
+                (offer_task.await, cleanup_task.await)
+            } else {
+                let cleanup_task = tokio::spawn(cleanup_job);
+                let offer_task = tokio::spawn(offer_job);
+                (offer_task.await, cleanup_task.await)
+            };
+            let offer_outcome = offer_outcome.unwrap().unwrap();
+            cleanup_outcome.unwrap().unwrap();
+            // Earlier rounds' chunks go too (their uploads were dropped).
+            let was_deleted = removed.lock().unwrap().contains(&hash);
+            assert_eq!(
+                was_deleted,
+                catalog.reader.chunk_status(&hash).unwrap().is_none()
+            );
+            if offer_outcome.missing_indexes.is_empty() {
+                assert!(
+                    !was_deleted,
+                    "round {round}: a chunk the offer relies on was deleted"
+                );
+                assert_eq!(
+                    catalog.reader.chunk_status(&hash).unwrap(),
+                    Some(ChunkStatus::Ok)
+                );
+            } else {
+                assert!(was_deleted, "round {round}: listed missing but not deleted");
+                cleaned_first_count += 1;
+            }
+            catalog
+                .writer
+                .delete_upload(device_id, offer_outcome.upload_id)
+                .await
+                .unwrap();
+        }
+        // Scheduling decides each round; over 100 rounds both orders occur.
+        assert!(
+            (1..100).contains(&cleaned_first_count),
+            "cleanup won {cleaned_first_count} of 100 rounds"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_chunk_ok_only_changes_a_bad_chunk() {
+        let catalog = open_test_catalog();
+        let hash = hash_of(b"chunk");
+        assert!(!catalog.writer.mark_chunk_ok(hash).await.unwrap());
+        catalog.writer.record_chunk(hash, 1, NOW_MS).await.unwrap();
+        assert!(!catalog.writer.mark_chunk_ok(hash).await.unwrap());
+        assert!(catalog.writer.mark_chunk_bad(hash).await.unwrap());
+        assert!(catalog.writer.mark_chunk_ok(hash).await.unwrap());
+        assert_eq!(
+            catalog.reader.chunk_status(&hash).unwrap(),
+            Some(ChunkStatus::Ok)
+        );
+    }
+
+    #[tokio::test]
+    async fn orphan_files_are_deleted_only_without_a_row() {
+        let catalog = open_test_catalog();
+        let (known, orphan) = (hash_of(b"known"), hash_of(b"orphan"));
+        catalog.writer.record_chunk(known, 1, NOW_MS).await.unwrap();
+        assert_eq!(
+            catalog
+                .reader
+                .hashes_not_in_catalog(&[known, orphan])
+                .unwrap(),
+            vec![orphan]
+        );
+        let removed = RemovedHashes::default();
+        let removed_count = catalog
+            .writer
+            .delete_orphan_chunk_files(vec![known, orphan], recording_remover(&removed))
+            .await
+            .unwrap();
+        assert_eq!(removed_count, 1);
+        assert_eq!(*removed.lock().unwrap(), vec![orphan]);
+    }
+
+    #[tokio::test]
+    async fn chunk_page_walks_every_chunk_in_hash_order() {
+        let catalog = open_test_catalog();
+        let mut hashes: Vec<ChunkHash> = (0..7_u8).map(|number| hash_of(&[number])).collect();
+        for hash in &hashes {
+            catalog.writer.record_chunk(*hash, 9, NOW_MS).await.unwrap();
+        }
+        catalog.writer.mark_chunk_bad(hashes[3]).await.unwrap();
+        let mut walked = Vec::new();
+        let mut after_hash = None;
+        loop {
+            let page = catalog.reader.chunk_page(after_hash.as_ref(), 3).unwrap();
+            let Some(last) = page.last() else { break };
+            after_hash = Some(last.hash);
+            walked.extend(page);
+        }
+        let bad_hash = hashes[3];
+        hashes.sort_by_key(|hash| hash.0);
+        assert_eq!(
+            walked.iter().map(|record| record.hash).collect::<Vec<_>>(),
+            hashes
+        );
+        assert!(walked.iter().all(|record| record.size_bytes == 9));
+        assert_eq!(
+            walked
+                .iter()
+                .filter(|record| record.status == ChunkStatus::Bad)
+                .map(|record| record.hash)
+                .collect::<Vec<_>>(),
+            vec![bad_hash]
+        );
     }
 }
