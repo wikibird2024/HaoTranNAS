@@ -9,13 +9,17 @@
 //!               │ server stopping               → Close SERVER_SHUTDOWN
 //!               │ bad frame / payload           → Error MALFORMED_FRAME, end
 //!               │ message not allowed           → Error UNEXPECTED_MESSAGE / NOT_PAIRED, end
+//!               │ PairRequest ok (Unpaired)     → PairOk, Close PAIRED_RECONNECT, end
 //!               └ client Close or end of stream → end quietly
 //! ```
 //!
-//! Generic over the stream, so plain TCP (dev mode), TLS (M3) and
+//! Generic over the stream, so plain TCP (dev mode), TLS and
 //! `tokio::io::duplex` (tests) all run the same code. Timeouts use
-//! `tokio::time`, so tests can pause the clock.
+//! `tokio::time`, so tests can pause the clock. The handshake timeout counts
+//! from accept, so a slow TLS handshake uses up the same 10 s.
 
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use haotrannas_core::codec::decode_frame;
@@ -30,10 +34,12 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::handlers::hello::{ServerIdentity, handle_hello};
+use crate::handlers::pair::{PairAttempt, PairStep, handle_pair_request};
 use crate::handlers::upload::{
     FileOfferRequest, UploadError, UploadStorage, handle_chunk_data, handle_commit,
     handle_file_offer,
 };
+use crate::pairing::PairingService;
 
 /// Text of the `Error INTERNAL` sent for requests that later milestones add.
 pub const NOT_IMPLEMENTED_MESSAGE: &str = "not implemented yet (milestone M1+)";
@@ -52,6 +58,40 @@ pub struct SessionSettings {
     pub idle_timeout_ms: u64,
     /// Chunk store and catalog for the upload requests.
     pub upload_storage: UploadStorage,
+    /// Pairing window and device CA; `None` in dev mode (no pairing).
+    pub pairing: Option<Arc<PairingService>>,
+}
+
+/// Who the client is, as its TLS client certificate says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerIdentity {
+    /// A paired, not revoked device (dev mode: always the dev device).
+    Device(u64),
+    /// No client certificate: may pair, ping and close.
+    NoCertificate,
+    /// A certificate from our device CA that the catalog does not know (or
+    /// revoked): `Hello` gets `NOT_PAIRED`.
+    UnknownCertificate,
+}
+
+/// One accepted connection, before its first frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Peer {
+    pub identity: PeerIdentity,
+    /// The client's address (pairing checks its IP).
+    pub address: SocketAddr,
+    /// When the TCP connection was accepted (start of the handshake timeout).
+    pub accepted_at: Instant,
+}
+
+/// What one connection has learned so far.
+#[derive(Debug)]
+struct Conversation {
+    state: SessionState,
+    /// `device_name` from `Hello` (the name a new device is paired under).
+    device_name: String,
+    /// Wrong pairing codes on this connection.
+    pair_failure_count: u32,
 }
 
 /// Why a session ended (for logs and tests).
@@ -76,6 +116,8 @@ enum Step {
     Reply(Message),
     /// Send `Error code` with the request's id, then end the connection.
     Fatal(ErrorCode, String),
+    /// Send this reply, then `Close reason` and end (after `PairOk`).
+    ReplyThenClose(Message, CloseReason, &'static str),
     /// End the connection without a reply (client `Close`).
     EndQuietly,
 }
@@ -87,27 +129,29 @@ enum Event {
     Frame(Result<Option<RawFrame>, FrameIoError>),
 }
 
-/// Serves one connection until it ends. `paired_device_id` is the device
-/// the connection belongs to (`None` = no known client certificate). The
+/// Serves one connection until it ends. `peer` says who the client is. The
 /// session stops with `Close SERVER_SHUTDOWN` once `shutdown` turns true.
 pub async fn run_session<Stream>(
     mut stream: Stream,
-    paired_device_id: Option<u64>,
+    peer: Peer,
     settings: &SessionSettings,
     mut shutdown: watch::Receiver<bool>,
 ) -> SessionEnd
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
 {
-    let accepted_at = Instant::now();
-    let mut last_frame_at = accepted_at;
-    let mut state = SessionState::AwaitingHello;
+    let mut last_frame_at = peer.accepted_at;
+    let mut conversation = Conversation {
+        state: SessionState::AwaitingHello,
+        device_name: String::new(),
+        pair_failure_count: 0,
+    };
     let mut decoder = FrameDecoder::new();
 
     let session_end = loop {
-        let (deadline, timeout_reason) = if state == SessionState::AwaitingHello {
+        let (deadline, timeout_reason) = if conversation.state == SessionState::AwaitingHello {
             (
-                accepted_at + Duration::from_millis(settings.handshake_timeout_ms),
+                peer.accepted_at + Duration::from_millis(settings.handshake_timeout_ms),
                 CloseReason::HandshakeTimeout,
             )
         } else {
@@ -168,7 +212,7 @@ where
         };
 
         let request_id = frame.header.request_id;
-        match handle_frame(&frame, &mut state, paired_device_id, settings).await {
+        match handle_frame(&frame, &mut conversation, &peer, settings).await {
             Step::Reply(reply) => {
                 if let Err(error) = write_frame(&mut stream, &reply, request_id).await {
                     tracing::debug!(%error, "connection failed while writing a reply");
@@ -180,6 +224,13 @@ where
             }
             Step::Fatal(code, text) => {
                 break send_fatal(&mut stream, request_id, code, &text).await;
+            }
+            Step::ReplyThenClose(reply, reason, text) => {
+                if let Err(error) = write_frame(&mut stream, &reply, request_id).await {
+                    tracing::debug!(%error, "connection failed while writing a reply");
+                    break SessionEnd::ConnectionFailed;
+                }
+                break send_close(&mut stream, reason, text).await;
             }
             Step::EndQuietly => break SessionEnd::ClientClosed,
         }
@@ -194,8 +245,8 @@ where
 /// Decodes one frame, checks it against the state machine and answers it.
 async fn handle_frame(
     frame: &RawFrame,
-    state: &mut SessionState,
-    paired_device_id: Option<u64>,
+    conversation: &mut Conversation,
+    peer: &Peer,
     settings: &SessionSettings,
 ) -> Step {
     let message = match decode_frame(frame) {
@@ -203,6 +254,7 @@ async fn handle_frame(
         Err(error) => return Step::Fatal(ErrorCode::MalformedFrame, error.to_string()),
     };
     let message_type = message.message_type();
+    let state = conversation.state;
     if let Err(code) = state.check_incoming(message_type) {
         return Step::Fatal(
             code,
@@ -211,27 +263,61 @@ async fn handle_frame(
     }
     match message {
         Message::Hello {
-            protocol_version, ..
-        } => match handle_hello(
             protocol_version,
-            &settings.server_identity,
-            paired_device_id,
-        ) {
+            device_name,
+            ..
+        } => match handle_hello(protocol_version, &settings.server_identity, peer.identity) {
             Ok((reply, next_state)) => {
-                *state = next_state;
+                conversation.state = next_state;
+                conversation.device_name = device_name;
                 Step::Reply(reply)
             }
             Err((code, text)) => Step::Fatal(code, text),
         },
         Message::Ping => Step::Reply(Message::Pong),
         Message::Close { .. } => {
-            *state = SessionState::Closed;
+            conversation.state = SessionState::Closed;
             Step::EndQuietly
+        }
+        Message::PairRequest { code } => {
+            let Some(pairing) = &settings.pairing else {
+                return Step::Reply(Message::Error {
+                    code: ErrorCode::PairingNotOpen.code(),
+                    message: "this server runs in dev mode: no pairing".to_owned(),
+                });
+            };
+            let attempt = PairAttempt {
+                peer_ip: peer.address.ip(),
+                device_name: &conversation.device_name,
+                code: &code,
+            };
+            let step = handle_pair_request(
+                pairing,
+                &settings.upload_storage.catalog_writer,
+                &attempt,
+                &mut conversation.pair_failure_count,
+            )
+            .await;
+            match step {
+                PairStep::Paired(pair_ok) => {
+                    conversation.state = SessionState::Closed;
+                    Step::ReplyThenClose(
+                        pair_ok,
+                        CloseReason::PairedReconnect,
+                        "paired: reconnect with the new certificate",
+                    )
+                }
+                PairStep::Refused(code, text) => Step::Reply(Message::Error {
+                    code: code.code(),
+                    message: fit_message(&text),
+                }),
+                PairStep::Fatal(code, text) => Step::Fatal(code, text),
+            }
         }
         Message::FileOffer { .. } | Message::ChunkData { .. } | Message::Commit { .. } => {
             // The state machine lets these through only in Ready, which
             // always has a device.
-            let Some(device_id) = paired_device_id else {
+            let PeerIdentity::Device(device_id) = peer.identity else {
                 return Step::Fatal(ErrorCode::NotPaired, "no device on this connection".into());
             };
             match handle_upload_request(message, &settings.upload_storage, device_id).await {
@@ -371,6 +457,12 @@ mod tests {
 
     impl TestClient {
         fn start(paired_device_id: Option<u64>) -> Self {
+            let identity =
+                paired_device_id.map_or(PeerIdentity::NoCertificate, PeerIdentity::Device);
+            Self::start_with(identity, None)
+        }
+
+        fn start_with(identity: PeerIdentity, pairing: Option<Arc<PairingService>>) -> Self {
             let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
             let (shutdown_sender, shutdown_receiver) = watch::channel(false);
             let (storage_folder, upload_storage) = open_test_storage();
@@ -379,15 +471,15 @@ mod tests {
                 handshake_timeout_ms: HANDSHAKE_TIMEOUT_MS,
                 idle_timeout_ms: IDLE_TIMEOUT_MS,
                 upload_storage,
+                pairing,
+            };
+            let peer = Peer {
+                identity,
+                address: "127.0.0.1:50000".parse().unwrap(),
+                accepted_at: Instant::now(),
             };
             let session = tokio::spawn(async move {
-                run_session(
-                    server_stream,
-                    paired_device_id,
-                    &settings,
-                    shutdown_receiver,
-                )
-                .await
+                run_session(server_stream, peer, &settings, shutdown_receiver).await
             });
             Self {
                 stream: client_stream,
@@ -711,6 +803,62 @@ mod tests {
         assert_eq!(
             client.expect_end().await,
             SessionEnd::FatalError(ErrorCode::NotPaired)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unknown_certificate_gets_not_paired_after_hello() {
+        let mut client = TestClient::start_with(PeerIdentity::UnknownCertificate, None);
+        let reply = client.hello().await;
+        assert!(
+            matches!(reply, Message::Error { code, .. } if code == error(ErrorCode::NotPaired))
+        );
+        assert_eq!(
+            client.expect_end().await,
+            SessionEnd::FatalError(ErrorCode::NotPaired)
+        );
+    }
+
+    #[tokio::test]
+    async fn right_pairing_code_gets_pair_ok_then_close_paired_reconnect() {
+        let tls_folder = tempfile::tempdir().unwrap();
+        let tls_identity =
+            Arc::new(crate::tls_identity::TlsIdentity::create(tls_folder.path()).unwrap());
+        let pairing = Arc::new(PairingService::new(
+            tls_identity,
+            crate::config::ServerConfig::default(),
+            haotrannas_core::limits::PAIRING_CODE_TTL_MS,
+        ));
+        let code = pairing.open_window().code;
+        let mut client = TestClient::start_with(PeerIdentity::NoCertificate, Some(pairing));
+        assert!(matches!(
+            client.hello().await,
+            Message::HelloOk { device_id: 0, .. }
+        ));
+        client
+            .send(
+                &Message::PairRequest {
+                    code: "000000x".into(),
+                },
+                2,
+            )
+            .await;
+        assert!(matches!(
+            client.receive().await,
+            Some((2, Message::Error { code, .. })) if code == error(ErrorCode::BadPairingCode)
+        ));
+        client.send(&Message::PairRequest { code }, 3).await;
+        assert!(matches!(
+            client.receive().await,
+            Some((3, Message::PairOk { device_id, .. })) if device_id > 0
+        ));
+        assert!(matches!(
+            client.receive().await,
+            Some((0, Message::Close { reason, .. })) if reason == CloseReason::PairedReconnect.reason()
+        ));
+        assert_eq!(
+            client.expect_end().await,
+            SessionEnd::ServerClosed(CloseReason::PairedReconnect)
         );
     }
 

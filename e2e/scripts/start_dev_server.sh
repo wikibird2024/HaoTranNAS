@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Start a dev-plain haotrannas-server in the background for client tests
-# (the Dart harness, manual cli runs).
+# Start a haotrannas-server in the background for client tests (the Dart
+# harness, manual cli runs): dev-plain by default, TLS with --tls.
 #
-#   e2e/scripts/start_dev_server.sh <data-dir>
+#   e2e/scripts/start_dev_server.sh [--tls] <data-dir>
 #
 # - builds haotrannas-server (debug; honours CARGO_TARGET_DIR)
 # - runs `init` if <data-dir> is not initialized yet
 # - starts `run --dev-plain --listen 127.0.0.1:0` in the background
+#   (with --tls: `run --listen 127.0.0.1:0`, TLS mode; get pairing codes with
+#   `haotrannas-server pair --data-dir <data-dir>`)
 # - prints exactly two lines on stdout, then exits 0:
 #       NAS_SERVER_ADDR=127.0.0.1:<port>
 #       NAS_SERVER_PID=<pid>
@@ -16,8 +18,13 @@
 # bytes): the admin socket path inside it must stay under 108 bytes.
 set -euo pipefail
 
+mode_flags=(--dev-plain)
+if [[ "${1:-}" == "--tls" ]]; then
+    mode_flags=()
+    shift
+fi
 if [[ $# -ne 1 ]]; then
-    echo "usage: $0 <data-dir>" >&2
+    echo "usage: $0 [--tls] <data-dir>" >&2
     exit 2
 fi
 data_dir="$1"
@@ -37,7 +44,7 @@ fi
 stdout_file="$data_dir/dev-server.stdout"
 log_file="$data_dir/dev-server.log"
 : >"$stdout_file"
-"$server_binary" run --dev-plain --listen 127.0.0.1:0 --data-dir "$data_dir" \
+"$server_binary" run "${mode_flags[@]}" --listen 127.0.0.1:0 --data-dir "$data_dir" \
     </dev/null >"$stdout_file" 2>"$log_file" &
 server_pid=$!
 

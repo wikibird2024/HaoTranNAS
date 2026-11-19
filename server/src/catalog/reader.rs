@@ -22,6 +22,8 @@ pub struct DeviceRecord {
     pub name: String,
     /// When it was paired, ms since the Unix epoch.
     pub paired_at_ms: i64,
+    /// When it was revoked (D-025); `None` while it may connect.
+    pub revoked_at_ms: Option<i64>,
 }
 
 /// One committed version of a file, with its chunk list (a `FileManifest`).
@@ -65,7 +67,9 @@ impl CatalogReader {
         Ok(connection)
     }
 
-    /// The device that owns this client certificate fingerprint, if paired.
+    /// The device that owns this client certificate fingerprint, if paired
+    /// and not revoked (a revoked certificate is refused like an unknown
+    /// one, D-025).
     pub fn device_by_cert(
         &self,
         cert_sha256: &[u8; HASH_BYTES],
@@ -73,18 +77,32 @@ impl CatalogReader {
         let connection = self.open_connection()?;
         Ok(connection
             .query_row(
-                "SELECT id, name, paired_at_ms FROM devices WHERE cert_sha256 = ?1",
+                "SELECT id, name, paired_at_ms, revoked_at_ms FROM devices
+                 WHERE cert_sha256 = ?1 AND revoked_at_ms IS NULL",
                 [cert_sha256],
                 device_from_row,
             )
             .optional()?)
     }
 
-    /// Every paired device, by id.
+    /// True if any device row (revoked or not) has this fingerprint.
+    pub fn has_device_with_cert(
+        &self,
+        cert_sha256: &[u8; HASH_BYTES],
+    ) -> Result<bool, CatalogError> {
+        let connection = self.open_connection()?;
+        Ok(connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM devices WHERE cert_sha256 = ?1)",
+            [cert_sha256],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Every device, revoked ones included, by id.
     pub fn list_devices(&self) -> Result<Vec<DeviceRecord>, CatalogError> {
         let connection = self.open_connection()?;
-        let mut select =
-            connection.prepare("SELECT id, name, paired_at_ms FROM devices ORDER BY id")?;
+        let mut select = connection
+            .prepare("SELECT id, name, paired_at_ms, revoked_at_ms FROM devices ORDER BY id")?;
         let devices = select
             .query_map([], device_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -214,12 +232,13 @@ impl CatalogReader {
     }
 }
 
-/// `id, name, paired_at_ms` → `DeviceRecord`.
+/// `id, name, paired_at_ms, revoked_at_ms` → `DeviceRecord`.
 fn device_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceRecord> {
     Ok(DeviceRecord {
         device_id: u64_from_row(row, 0)?,
         name: row.get(1)?,
         paired_at_ms: row.get(2)?,
+        revoked_at_ms: row.get(3)?,
     })
 }
 

@@ -1,6 +1,7 @@
 //! Helpers for the end-to-end tests: find the built server and cli programs,
-//! start the server on a temporary data folder, stop it afterwards, and talk
-//! raw frames to it.
+//! start the server (dev-plain or TLS) on a temporary data folder, get
+//! pairing codes, stop it afterwards, and talk raw frames to it (plain TCP or
+//! TLS).
 //!
 //! The tests run the real binaries, so build them first:
 //! `cargo build --workspace --bins`.
@@ -19,6 +20,9 @@ use haotrannas_core::chunker::ChunkHash;
 use haotrannas_core::codec::{decode_frame, encode_frame};
 use haotrannas_core::frame::FrameDecoder;
 use haotrannas_core::message::Message;
+use haotrannas_core::tls::{ClientIdentity, ServerPin, client_config, server_name};
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tempfile::TempDir;
 
 /// How long to wait for the server's `listening on` line.
@@ -81,9 +85,18 @@ pub fn init_data_folder(data_directory: &Path) -> anyhow::Result<Output> {
     Ok(output)
 }
 
-/// A real `haotrannas-server run --dev-plain` on a fresh temporary data
-/// folder (or a given one). Killed (SIGKILL) when dropped, unless already
-/// stopped.
+/// How the test server runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerMode {
+    /// `run --dev-plain`: plain TCP, every connection is device 1.
+    DevPlain,
+    /// `run` without `--dev-plain`: TLS, pairing.
+    Tls,
+}
+
+/// A real `haotrannas-server run` (dev-plain or TLS) on a fresh temporary
+/// data folder (or a given one). Killed (SIGKILL) when dropped, unless
+/// already stopped.
 pub struct DevServer {
     child: Child,
     address: SocketAddr,
@@ -104,13 +117,36 @@ impl DevServer {
     /// Like [`start`](Self::start) with extra `run` flags, for example
     /// `["--handshake-timeout-ms", "300"]`.
     pub fn start_with_args(extra_run_args: &[&str]) -> anyhow::Result<Self> {
+        Self::start_in_temporary_folder(ServerMode::DevPlain, extra_run_args)
+    }
+
+    /// `init`, then `run --listen 127.0.0.1:0` in TLS mode.
+    pub fn start_tls() -> anyhow::Result<Self> {
+        Self::start_tls_with_args(&[])
+    }
+
+    /// Like [`start_tls`](Self::start_tls) with extra `run` flags, for
+    /// example `["--pairing-code-ttl-ms", "300"]`.
+    pub fn start_tls_with_args(extra_run_args: &[&str]) -> anyhow::Result<Self> {
+        Self::start_in_temporary_folder(ServerMode::Tls, extra_run_args)
+    }
+
+    fn start_in_temporary_folder(
+        mode: ServerMode,
+        extra_run_args: &[&str],
+    ) -> anyhow::Result<Self> {
         // Short path: the admin socket path must stay under 108 bytes.
         let temporary_directory = tempfile::Builder::new()
             .prefix("htn-e2e-")
             .tempdir()
             .context("cannot make a temporary folder")?;
         let data_directory = temporary_directory.path().join("data");
-        Self::spawn(data_directory, extra_run_args, Some(temporary_directory))
+        Self::spawn(
+            mode,
+            data_directory,
+            extra_run_args,
+            Some(temporary_directory),
+        )
     }
 
     /// `init` (only if `data_directory` is not a data folder yet), then
@@ -118,10 +154,21 @@ impl DevServer {
     /// kill the server and start a new one on the same data. Keep the path
     /// short (admin socket < 108 bytes).
     pub fn start_on(data_directory: &Path) -> anyhow::Result<Self> {
-        Self::spawn(data_directory.to_path_buf(), &[], None)
+        Self::spawn(
+            ServerMode::DevPlain,
+            data_directory.to_path_buf(),
+            &[],
+            None,
+        )
+    }
+
+    /// Like [`start_on`](Self::start_on) in TLS mode.
+    pub fn start_tls_on(data_directory: &Path) -> anyhow::Result<Self> {
+        Self::spawn(ServerMode::Tls, data_directory.to_path_buf(), &[], None)
     }
 
     fn spawn(
+        mode: ServerMode,
         data_directory: PathBuf,
         extra_run_args: &[&str],
         temporary_directory: Option<TempDir>,
@@ -147,14 +194,13 @@ impl DevServer {
             log_number += 1;
         };
         let log_file = File::create(&log_path).context("cannot make the server log")?;
-        let mut child = Command::new(server_binary()?)
-            .args([
-                "run",
-                "--dev-plain",
-                "--listen",
-                "127.0.0.1:0",
-                "--data-dir",
-            ])
+        let mut command = Command::new(server_binary()?);
+        command.arg("run");
+        if mode == ServerMode::DevPlain {
+            command.arg("--dev-plain");
+        }
+        let mut child = command
+            .args(["--listen", "127.0.0.1:0", "--data-dir"])
             .arg(&data_directory)
             .args(extra_run_args)
             .stdin(Stdio::null())
@@ -190,6 +236,12 @@ impl DevServer {
     /// The server's data folder.
     pub fn data_directory(&self) -> &Path {
         &self.data_directory
+    }
+
+    /// Opens a pairing window (`haotrannas-server pair`) and returns the code
+    /// and the server id it printed.
+    pub fn pairing_code(&self) -> anyhow::Result<PairingCode> {
+        pairing_code(&self.data_directory)
     }
 
     /// SIGKILL (a crash: no cleanup at all) and wait for the process.
@@ -269,6 +321,100 @@ pub fn parse_listening_line(line: &str) -> anyhow::Result<SocketAddr> {
         .with_context(|| format!("bad address in {line:?}"))
 }
 
+/// What `haotrannas-server pair` printed:
+/// `code 482913 · server id 3F9A-C21B-77E0 · valid 120 s`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingCode {
+    pub code: String,
+    pub server_id: String,
+    pub valid_seconds: u64,
+}
+
+/// Runs `haotrannas-server pair --data-dir <data_directory>` against the
+/// running server and parses its line.
+pub fn pairing_code(data_directory: &Path) -> anyhow::Result<PairingCode> {
+    let output = run_server_command(&[
+        OsStr::new("pair"),
+        OsStr::new("--data-dir"),
+        data_directory.as_os_str(),
+    ])?;
+    let stdout = expect_success(&output)?;
+    parse_pairing_line(stdout.trim_end())
+}
+
+/// Parses `code <code> · server id <id> · valid <s> s`.
+pub fn parse_pairing_line(line: &str) -> anyhow::Result<PairingCode> {
+    let words: Vec<&str> = line.split(' ').collect();
+    let [
+        "code",
+        code,
+        "·",
+        "server",
+        "id",
+        server_id,
+        "·",
+        "valid",
+        valid_seconds,
+        "s",
+    ] = words.as_slice()
+    else {
+        bail!("not a pairing line: {line:?}");
+    };
+    Ok(PairingCode {
+        code: (*code).to_owned(),
+        server_id: (*server_id).to_owned(),
+        valid_seconds: valid_seconds.parse()?,
+    })
+}
+
+/// `haotrannas-cli --server A --identity-dir D pair --code C [extra args]`.
+pub fn cli_pair(
+    address: SocketAddr,
+    identity_directory: &Path,
+    code: &str,
+    extra_args: &[&str],
+) -> anyhow::Result<Output> {
+    Command::new(cli_binary()?)
+        .arg("--server")
+        .arg(address.to_string())
+        .arg("--identity-dir")
+        .arg(identity_directory)
+        .args(["pair", "--code", code])
+        .args(extra_args)
+        .output()
+        .context("cannot run haotrannas-cli pair")
+}
+
+/// `haotrannas-cli --identity-dir D [--server A] <args>` (TLS with the
+/// saved pairing).
+pub fn cli_paired(
+    identity_directory: &Path,
+    address: Option<SocketAddr>,
+    args: &[&OsStr],
+) -> anyhow::Result<Output> {
+    let mut command = Command::new(cli_binary()?);
+    command.arg("--identity-dir").arg(identity_directory);
+    if let Some(address) = address {
+        command.arg("--server").arg(address.to_string());
+    }
+    command
+        .args(args)
+        .output()
+        .context("cannot run haotrannas-cli")
+}
+
+/// The device certificate and key the cli saved in `identity_directory`.
+pub fn load_client_identity(identity_directory: &Path) -> anyhow::Result<ClientIdentity> {
+    let cert_der = CertificateDer::from_pem_file(identity_directory.join("device.crt.pem"))
+        .context("cannot read device.crt.pem")?;
+    let key_der = PrivatePkcs8KeyDer::from_pem_file(identity_directory.join("device.key.pem"))
+        .context("cannot read device.key.pem")?;
+    Ok(ClientIdentity {
+        cert_der: cert_der.to_vec(),
+        key_pkcs8_der: key_der.secret_pkcs8_der().to_vec(),
+    })
+}
+
 /// Runs the cli with `args` and returns its output.
 pub fn run_cli(args: &[&str]) -> anyhow::Result<Output> {
     Command::new(cli_binary()?)
@@ -277,20 +423,39 @@ pub fn run_cli(args: &[&str]) -> anyhow::Result<Output> {
         .context("cannot run haotrannas-cli")
 }
 
-/// A hand-driven TCP client: sends any bytes or frames, reads frames back.
+/// A byte stream the raw client talks over (TCP or TLS over TCP).
+pub trait RawStream: Read + Write + Send {}
+impl<Stream: Read + Write + Send> RawStream for Stream {}
+
+/// A hand-driven client: sends any bytes or frames, reads frames back.
 pub struct RawClient {
-    stream: TcpStream,
+    stream: Box<dyn RawStream>,
     decoder: FrameDecoder,
 }
 
 impl RawClient {
-    /// Connects with a read timeout of `READ_TIMEOUT_MS`.
+    /// Connects over plain TCP with a read timeout of `READ_TIMEOUT_MS`.
     pub fn connect(address: SocketAddr) -> anyhow::Result<Self> {
-        let stream = TcpStream::connect(address).context("cannot connect")?;
-        stream.set_read_timeout(Some(Duration::from_millis(READ_TIMEOUT_MS)))?;
-        stream.set_nodelay(true)?;
+        let stream = connect_tcp(address)?;
         Ok(Self {
-            stream,
+            stream: Box::new(stream),
+            decoder: FrameDecoder::new(),
+        })
+    }
+
+    /// Connects over TLS 1.3 (the cli's settings: server checked by `pin`,
+    /// this client certificate if given). The handshake runs on the first
+    /// write; a refused client certificate shows on the first read.
+    pub fn connect_tls(
+        address: SocketAddr,
+        pin: ServerPin,
+        client_identity: Option<ClientIdentity>,
+    ) -> anyhow::Result<Self> {
+        let config = client_config(pin, client_identity)?;
+        let tls_connection = rustls::ClientConnection::new(config, server_name())?;
+        let stream = rustls::StreamOwned::new(tls_connection, connect_tcp(address)?);
+        Ok(Self {
+            stream: Box::new(stream),
             decoder: FrameDecoder::new(),
         })
     }
@@ -298,6 +463,7 @@ impl RawClient {
     /// Writes raw bytes.
     pub fn send_bytes(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         self.stream.write_all(bytes)?;
+        self.stream.flush()?;
         Ok(())
     }
 
@@ -346,6 +512,14 @@ impl RawClient {
     }
 }
 
+/// TCP with a read timeout of `READ_TIMEOUT_MS` and no Nagle delay.
+fn connect_tcp(address: SocketAddr) -> anyhow::Result<TcpStream> {
+    let stream = TcpStream::connect(address).context("cannot connect")?;
+    stream.set_read_timeout(Some(Duration::from_millis(READ_TIMEOUT_MS)))?;
+    stream.set_nodelay(true)?;
+    Ok(stream)
+}
+
 /// Runs the server binary with `args` (for example `restore ...`).
 pub fn run_server_command(args: &[&OsStr]) -> anyhow::Result<Output> {
     Command::new(server_binary()?)
@@ -357,10 +531,24 @@ pub fn run_server_command(args: &[&OsStr]) -> anyhow::Result<Output> {
 /// `haotrannas-server restore --data-dir D --path P --output F` (device 1,
 /// latest version).
 pub fn restore_file(data_directory: &Path, path: &str, output: &Path) -> anyhow::Result<Output> {
+    restore_file_of_device(data_directory, 1, path, output)
+}
+
+/// `haotrannas-server restore --data-dir D --device-id N --path P --output F`
+/// (latest version).
+pub fn restore_file_of_device(
+    data_directory: &Path,
+    device_id: u64,
+    path: &str,
+    output: &Path,
+) -> anyhow::Result<Output> {
+    let device_id_text = device_id.to_string();
     run_server_command(&[
         OsStr::new("restore"),
         OsStr::new("--data-dir"),
         data_directory.as_os_str(),
+        OsStr::new("--device-id"),
+        OsStr::new(&device_id_text),
         OsStr::new("--path"),
         OsStr::new(path),
         OsStr::new("--output"),

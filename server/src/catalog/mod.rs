@@ -43,6 +43,9 @@ pub enum CatalogError {
     /// `remove_device` on a device that still has committed backups.
     #[error("device still has backed-up files; removing it would orphan them")]
     DeviceHasBackups,
+    /// The certificate for a new device could not be made (pairing).
+    #[error("could not issue the device certificate: {0}")]
+    CertificateIssue(String),
 }
 
 /// Status of a chunk row (`chunks.status`).

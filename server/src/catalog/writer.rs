@@ -82,6 +82,17 @@ impl From<rusqlite::Error> for CommitError {
     }
 }
 
+/// What `revoke_device` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevokeOutcome {
+    /// Revoked now; its open uploads were dropped, its backups stay.
+    Revoked,
+    /// It was already revoked at this time; nothing changed.
+    AlreadyRevoked { revoked_at_ms: i64 },
+    /// No device has this id.
+    NoSuchDevice,
+}
+
 /// Async handle to the writer thread. Clone it freely.
 #[derive(Debug, Clone)]
 pub struct CatalogWriter {
@@ -140,6 +151,35 @@ impl CatalogWriter {
         paired_at_ms: i64,
     ) -> Result<u64, CatalogError> {
         self.run(move |connection| add_device(connection, &name, &cert_sha256, paired_at_ms))
+            .await
+    }
+
+    /// Pairing: adds a device and stores its certificate fingerprint in one
+    /// transaction. `issue_cert` gets the new device id (the certificate's
+    /// CN is `device-<id>`, spec §7) and returns the certificate and its
+    /// SHA-256. If it fails, nothing is written.
+    pub async fn add_paired_device<Cert, IssueCert>(
+        &self,
+        name: String,
+        paired_at_ms: i64,
+        issue_cert: IssueCert,
+    ) -> Result<(u64, Cert), CatalogError>
+    where
+        Cert: Send + 'static,
+        IssueCert: FnOnce(u64) -> Result<(Cert, [u8; HASH_BYTES]), CatalogError> + Send + 'static,
+    {
+        self.run(move |connection| add_paired_device(connection, &name, paired_at_ms, issue_cert))
+            .await
+    }
+
+    /// Revokes a device (D-025): its certificate is refused from now on, its
+    /// open uploads are dropped, its backups stay restorable.
+    pub async fn revoke_device(
+        &self,
+        device_id: u64,
+        now_ms: i64,
+    ) -> Result<RevokeOutcome, CatalogError> {
+        self.run(move |connection| revoke_device(connection, device_id, now_ms))
             .await
     }
 
@@ -217,7 +257,8 @@ impl CatalogWriter {
             .await
     }
 
-    /// `Commit` (spec §8) in one transaction; returns the new version id.
+    /// `Commit` (spec §8) in one transaction; returns the new version id, or
+    /// the latest version's id when it is the same file (D-029).
     pub async fn commit_upload(
         &self,
         device_id: u64,
@@ -259,6 +300,67 @@ pub fn add_device(
         params![name, cert_sha256, paired_at_ms],
     )?;
     Ok(row_id_to_u64(connection.last_insert_rowid()))
+}
+
+/// See [`CatalogWriter::add_paired_device`]. The row is first inserted with
+/// a random placeholder fingerprint (the id is needed to make the
+/// certificate), then updated, inside one transaction: no one ever sees the
+/// placeholder, and a failure rolls everything back.
+pub fn add_paired_device<Cert>(
+    connection: &mut Connection,
+    name: &str,
+    paired_at_ms: i64,
+    issue_cert: impl FnOnce(u64) -> Result<(Cert, [u8; HASH_BYTES]), CatalogError>,
+) -> Result<(u64, Cert), CatalogError> {
+    let transaction = connection.transaction()?;
+    let placeholder_sha256: [u8; HASH_BYTES] = rand::random();
+    transaction.execute(
+        "INSERT INTO devices (name, cert_sha256, paired_at_ms) VALUES (?1, ?2, ?3)",
+        params![name, placeholder_sha256, paired_at_ms],
+    )?;
+    let device_sql_id = transaction.last_insert_rowid();
+    let device_id = row_id_to_u64(device_sql_id);
+    let (cert, cert_sha256) = issue_cert(device_id)?;
+    transaction.execute(
+        "UPDATE devices SET cert_sha256 = ?1 WHERE id = ?2",
+        params![cert_sha256, device_sql_id],
+    )?;
+    transaction.commit()?;
+    Ok((device_id, cert))
+}
+
+/// See [`CatalogWriter::revoke_device`].
+pub fn revoke_device(
+    connection: &mut Connection,
+    device_id: u64,
+    now_ms: i64,
+) -> Result<RevokeOutcome, CatalogError> {
+    let Ok(device_sql_id) = sql_integer(device_id) else {
+        return Ok(RevokeOutcome::NoSuchDevice);
+    };
+    let transaction = connection.transaction()?;
+    let revoked_at_ms: Option<Option<i64>> = transaction
+        .query_row(
+            "SELECT revoked_at_ms FROM devices WHERE id = ?1",
+            [device_sql_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let outcome = match revoked_at_ms {
+        None => RevokeOutcome::NoSuchDevice,
+        Some(Some(revoked_at_ms)) => RevokeOutcome::AlreadyRevoked { revoked_at_ms },
+        Some(None) => {
+            transaction.execute(
+                "UPDATE devices SET revoked_at_ms = ?1 WHERE id = ?2",
+                [now_ms, device_sql_id],
+            )?;
+            // Its open uploads can never be committed now.
+            transaction.execute("DELETE FROM uploads WHERE device_id = ?1", [device_sql_id])?;
+            RevokeOutcome::Revoked
+        }
+    };
+    transaction.commit()?;
+    Ok(outcome)
 }
 
 /// See [`CatalogWriter::remove_device`].
@@ -322,27 +424,19 @@ pub fn offer_file(
 
     // Shortcut: the latest version is the same file and all its chunks are
     // healthy → already backed up.
-    let latest_version: Option<(i64, i64, i64, [u8; HASH_BYTES])> = transaction
-        .query_row(
-            "SELECT versions.id, versions.size_bytes, versions.modified_time_ms, versions.file_sha256
-             FROM versions JOIN files ON files.id = versions.file_id
-             WHERE files.device_id = ?1 AND files.path = ?2
-             ORDER BY versions.id DESC LIMIT 1",
-            params![device_sql_id, offer.path],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .optional()?;
-    if let Some((version_id, size_bytes, modified_time_ms, file_sha256)) = latest_version {
-        let is_same_file = size_bytes == size_sql_bytes
-            && modified_time_ms == offer.modified_time_ms
-            && file_sha256 == offer.file_sha256;
-        if is_same_file && !version_has_unhealthy_chunk(&transaction, version_id)? {
-            return Ok(OfferOutcome {
-                upload_id: 0,
-                existing_version_id: row_id_to_u64(version_id),
-                missing_indexes: Vec::new(),
-            });
-        }
+    let same_file = SameFile {
+        device_sql_id,
+        path: &offer.path,
+        size_sql_bytes,
+        modified_time_ms: offer.modified_time_ms,
+        file_sha256: &offer.file_sha256,
+    };
+    if let Some(version_sql_id) = healthy_identical_latest_version(&transaction, &same_file)? {
+        return Ok(OfferOutcome {
+            upload_id: 0,
+            existing_version_id: row_id_to_u64(version_sql_id),
+            missing_indexes: Vec::new(),
+        });
     }
 
     let upload_sql_id = insert_upload(&transaction, device_sql_id, offer, size_sql_bytes, now_ms)?;
@@ -353,6 +447,44 @@ pub fn offer_file(
         existing_version_id: 0,
         missing_indexes,
     })
+}
+
+/// A file as offered or uploaded, to compare with the latest version.
+struct SameFile<'a> {
+    device_sql_id: i64,
+    path: &'a str,
+    size_sql_bytes: i64,
+    modified_time_ms: i64,
+    file_sha256: &'a [u8; HASH_BYTES],
+}
+
+/// The latest version of (device, path) if it is this exact file (same
+/// size, modified time and hash) and all its chunks are healthy.
+fn healthy_identical_latest_version(
+    transaction: &Transaction<'_>,
+    file: &SameFile<'_>,
+) -> Result<Option<i64>, CatalogError> {
+    let latest_version: Option<(i64, i64, i64, [u8; HASH_BYTES])> = transaction
+        .query_row(
+            "SELECT versions.id, versions.size_bytes, versions.modified_time_ms, versions.file_sha256
+             FROM versions JOIN files ON files.id = versions.file_id
+             WHERE files.device_id = ?1 AND files.path = ?2
+             ORDER BY versions.id DESC LIMIT 1",
+            params![file.device_sql_id, file.path],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((version_sql_id, size_bytes, modified_time_ms, file_sha256)) = latest_version else {
+        return Ok(None);
+    };
+    let is_same_file = size_bytes == file.size_sql_bytes
+        && modified_time_ms == file.modified_time_ms
+        && file_sha256 == *file.file_sha256;
+    if is_same_file && !version_has_unhealthy_chunk(transaction, version_sql_id)? {
+        Ok(Some(version_sql_id))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Saves the offered chunk list and returns, for each distinct hash not
@@ -517,6 +649,22 @@ pub fn commit_upload(
     )?;
     if has_missing_chunk {
         return Err(CommitError::ChunksMissing);
+    }
+
+    // D-029: the latest version is already this exact file (two identical
+    // uploads raced, or a CommitOk was lost and the client uploaded again)
+    // → answer with that version instead of adding a duplicate.
+    let same_file = SameFile {
+        device_sql_id,
+        path: &path,
+        size_sql_bytes: size_bytes,
+        modified_time_ms,
+        file_sha256: &file_sha256,
+    };
+    if let Some(version_sql_id) = healthy_identical_latest_version(&transaction, &same_file)? {
+        transaction.execute("DELETE FROM uploads WHERE id = ?1", [upload_sql_id])?;
+        transaction.commit()?;
+        return Ok(row_id_to_u64(version_sql_id));
     }
 
     transaction.execute(
@@ -1067,6 +1215,136 @@ mod tests {
                 .is_none()
         );
         assert_eq!(count_rows(&catalog, "uploads"), 0);
+    }
+
+    #[tokio::test]
+    async fn two_identical_uploads_commit_to_one_version() {
+        let catalog = open_test_catalog();
+        let device_id = add_test_device(&catalog, "phone").await;
+        let offer = offer_for("a.txt", vec![hash_of(b"1"), hash_of(b"2")], NOW_MS);
+        // Both offers arrive before either commit: two open uploads.
+        let first = catalog
+            .writer
+            .offer_file(device_id, offer.clone(), NOW_MS)
+            .await
+            .unwrap();
+        let second = catalog
+            .writer
+            .offer_file(device_id, offer.clone(), NOW_MS)
+            .await
+            .unwrap();
+        assert_ne!(first.upload_id, second.upload_id);
+        store_all_chunks(&catalog, &offer).await;
+        let first_version_id = catalog
+            .writer
+            .commit_upload(device_id, first.upload_id, NOW_MS)
+            .await
+            .unwrap();
+        let second_version_id = catalog
+            .writer
+            .commit_upload(device_id, second.upload_id, NOW_MS + 1)
+            .await
+            .unwrap();
+        assert_eq!(first_version_id, second_version_id);
+        assert_eq!(count_rows(&catalog, "versions"), 1);
+        assert_eq!(count_rows(&catalog, "uploads"), 0);
+        assert_eq!(count_rows(&catalog, "upload_chunks"), 0);
+
+        // Another modified time is another version.
+        let touched = offer_for("a.txt", offer.chunk_hashes.clone(), NOW_MS + 9);
+        let third_version_id = back_up(&catalog, device_id, &touched).await;
+        assert_ne!(third_version_id, first_version_id);
+        assert_eq!(count_rows(&catalog, "versions"), 2);
+    }
+
+    #[tokio::test]
+    async fn paired_device_gets_its_cert_hash_in_one_transaction() {
+        let catalog = open_test_catalog();
+        let (device_id, cert_name) = catalog
+            .writer
+            .add_paired_device("pixel".to_owned(), NOW_MS, |device_id| {
+                let cert_name = format!("device-{device_id}");
+                let cert_sha256: [u8; HASH_BYTES] = Sha256::digest(&cert_name).into();
+                Ok((cert_name, cert_sha256))
+            })
+            .await
+            .unwrap();
+        assert_eq!(cert_name, format!("device-{device_id}"));
+        let found = catalog
+            .reader
+            .device_by_cert(&Sha256::digest(&cert_name).into())
+            .unwrap()
+            .unwrap();
+        assert_eq!((found.device_id, found.name.as_str()), (device_id, "pixel"));
+
+        // A failing certificate step leaves no row behind.
+        let failed = catalog
+            .writer
+            .add_paired_device("broken".to_owned(), NOW_MS, |_| {
+                Err::<((), [u8; HASH_BYTES]), _>(CatalogError::CertificateIssue("test".into()))
+            })
+            .await;
+        assert!(matches!(failed, Err(CatalogError::CertificateIssue(_))));
+        assert_eq!(count_rows(&catalog, "devices"), 1);
+    }
+
+    #[tokio::test]
+    async fn revoked_device_is_refused_but_keeps_its_backups() {
+        let catalog = open_test_catalog();
+        let phone_id = add_test_device(&catalog, "phone").await;
+        let phone_cert: [u8; HASH_BYTES] = Sha256::digest("phone").into();
+        let offer = offer_for("a", vec![hash_of(b"1")], NOW_MS);
+        let version_id = back_up(&catalog, phone_id, &offer).await;
+        catalog
+            .writer
+            .offer_file(
+                phone_id,
+                offer_for("b", vec![hash_of(b"2")], NOW_MS),
+                NOW_MS,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            catalog
+                .writer
+                .revoke_device(phone_id, NOW_MS + 7)
+                .await
+                .unwrap(),
+            RevokeOutcome::Revoked
+        );
+        assert!(
+            catalog
+                .reader
+                .device_by_cert(&phone_cert)
+                .unwrap()
+                .is_none()
+        );
+        assert!(catalog.reader.has_device_with_cert(&phone_cert).unwrap());
+        let listed = catalog.reader.list_devices().unwrap();
+        assert_eq!(listed[0].revoked_at_ms, Some(NOW_MS + 7));
+        assert_eq!(count_rows(&catalog, "uploads"), 0, "open uploads dropped");
+        let latest = catalog
+            .reader
+            .latest_version(phone_id, "a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.version_id, version_id, "backups stay");
+
+        assert_eq!(
+            catalog
+                .writer
+                .revoke_device(phone_id, NOW_MS + 9)
+                .await
+                .unwrap(),
+            RevokeOutcome::AlreadyRevoked {
+                revoked_at_ms: NOW_MS + 7
+            }
+        );
+        assert_eq!(
+            catalog.writer.revoke_device(999, NOW_MS).await.unwrap(),
+            RevokeOutcome::NoSuchDevice
+        );
     }
 
     #[tokio::test]

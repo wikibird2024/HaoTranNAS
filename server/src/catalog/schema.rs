@@ -1,4 +1,5 @@
-//! Table definitions and migrations: `devices`, `files`, `versions`,
+//! Table definitions and migrations: `devices` (with `revoked_at_ms` from
+//! version 2), `files`, `versions`,
 //! `version_chunks`, `chunks`, `uploads`, `upload_chunks`.
 //!
 //! The schema version lives in `PRAGMA user_version`. Migration `n` (counting
@@ -76,6 +77,11 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (upload_id, position)
     ) WITHOUT ROWID;
     CREATE INDEX upload_chunks_by_chunk_hash ON upload_chunks(chunk_hash);
+    ",
+    // Version 2 (D-025): a revoked device keeps its row and its backups; its
+    // certificate is refused like an unknown one.
+    "
+    ALTER TABLE devices ADD COLUMN revoked_at_ms INTEGER NULL;
     ",
 ];
 
@@ -176,6 +182,32 @@ mod tests {
             open_writer_connection(&database_path),
             Err(CatalogError::SchemaTooNew { .. })
         ));
+    }
+
+    #[test]
+    fn version_one_file_migrates_and_keeps_its_devices() {
+        let folder = tempfile::tempdir().unwrap();
+        let database_path = folder.path().join("index.sqlite");
+        {
+            let mut connection = Connection::open(&database_path).unwrap();
+            let transaction = connection.transaction().unwrap();
+            transaction.execute_batch(MIGRATIONS[0]).unwrap();
+            transaction.pragma_update(None, "user_version", 1).unwrap();
+            transaction.commit().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO devices (name, cert_sha256, paired_at_ms) VALUES ('phone', ?1, 5)",
+                    [vec![7_u8; 32]],
+                )
+                .unwrap();
+        }
+        let connection = open_writer_connection(&database_path).unwrap();
+        let (name, revoked_at_ms): (String, Option<i64>) = connection
+            .query_row("SELECT name, revoked_at_ms FROM devices", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((name.as_str(), revoked_at_ms), ("phone", None));
     }
 
     #[test]

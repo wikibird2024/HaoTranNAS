@@ -342,9 +342,15 @@ fn corrupted_chunk_is_healed_by_the_next_upload() {
     assert!(!restored.exists());
 
     // Same file offered again: the bad chunk is listed missing and replaced.
+    // The healed version 1 is then the same file, so Commit answers with it
+    // instead of adding a duplicate (D-029).
     assert_eq!(
         upload(&server, &file, &[]),
-        format!("uploaded 1 of 2 chunks ({MIB} bytes), version 2")
+        format!("uploaded 1 of 2 chunks ({MIB} bytes), version 1")
+    );
+    assert_eq!(
+        version_count(server.data_directory(), "old.jpg").unwrap(),
+        1
     );
     assert_eq!(check_every_chunk_file(server.data_directory()).unwrap(), 2);
     restore_and_compare(server.data_directory(), "old.jpg", &file, folder.path());
@@ -553,18 +559,21 @@ fn restore_refuses_to_overwrite_without_force() {
 }
 
 #[test]
-fn cli_upload_needs_dev_plain_and_a_readable_file() {
+fn cli_upload_needs_a_pairing_or_dev_plain_and_a_readable_file() {
     let server = DevServer::start().unwrap();
     let folder = work_folder();
     let file = write_test_file(folder.path(), "a.txt", 3, 97);
     let output = haotrannas_e2e::run_cli(&[
         "--server",
         &server.address().to_string(),
+        "--identity-dir",
+        folder.path().join("no-identity").to_str().unwrap(),
         "upload",
         file.to_str().unwrap(),
     ])
     .unwrap();
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not paired"));
     let output = cli_upload(server.address(), &folder.path().join("missing.txt"), &[]).unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());

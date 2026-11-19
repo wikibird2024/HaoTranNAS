@@ -1,21 +1,35 @@
-//! The accept loop: binds the port, accepts TCP connections and spawns one
-//! session task per connection, at most `max_connections` at once (more are
-//! refused). Stops accepting when shutdown starts; the sessions then send
+//! The accept loop: accepts TCP connections and spawns one session task per
+//! connection, at most `max_connections` at once (more are refused). Stops
+//! accepting when shutdown starts; the sessions then send
 //! `Close SERVER_SHUTDOWN` themselves.
 //!
-//! M0 serves plain TCP only (`--dev-plain`, loopback, every connection is
-//! the dev device). M3 wraps each stream in TLS here and looks up the device
-//! from the client certificate.
+//! ```text
+//!  accept ─► slot free? ─► task:
+//!     dev-plain: plain TCP, the dev device ─────────────────────────────► session
+//!     TLS:       handshake (within HANDSHAKE_TIMEOUT_MS of accept)
+//!                ─► client cert? none → NoCertificate (may pair)
+//!                                fingerprint in devices, not revoked → Device(id)
+//!                                else → UnknownCertificate (Hello gets NOT_PAIRED)
+//!                ─► session
+//! ```
+//!
+//! The device CA check is rustls's (`WebPkiClientVerifier`): a cert from
+//! another CA fails the handshake, which the client sees on its first read.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::net::TcpListener;
+use haotrannas_core::fingerprint::CertFingerprint;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
+use tokio::time::Instant;
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 
-use crate::session::{SessionSettings, run_session};
+use crate::catalog::reader::CatalogReader;
+use crate::session::{Peer, PeerIdentity, SessionSettings, run_session};
 
 /// Pause after a failed accept (for example too many open files), so the
 /// loop does not spin.
@@ -43,12 +57,23 @@ impl ConnectionLimit {
     }
 }
 
-/// Accepts plain TCP connections until `shutdown` turns true, then waits up
-/// to `shutdown_grace_ms` for the sessions to send their `Close` and end.
-/// Every connection is `dev_device_id`.
-pub async fn serve_dev_plain(
+/// How connections are taken in.
+pub enum ConnectionMode {
+    /// Plain TCP (`--dev-plain`, loopback only): every connection is this
+    /// device.
+    DevPlain { dev_device_id: u64 },
+    /// TLS 1.3; the client certificate (if any) is looked up in the catalog.
+    Tls {
+        acceptor: TlsAcceptor,
+        catalog_reader: CatalogReader,
+    },
+}
+
+/// Accepts connections until `shutdown` turns true, then waits up to
+/// `shutdown_grace_ms` for the sessions to send their `Close` and end.
+pub async fn serve(
     listener: TcpListener,
-    dev_device_id: u64,
+    connection_mode: Arc<ConnectionMode>,
     settings: Arc<SessionSettings>,
     connection_limit: ConnectionLimit,
     mut shutdown: watch::Receiver<bool>,
@@ -84,13 +109,47 @@ pub async fn serve_dev_plain(
         if let Err(error) = stream.set_nodelay(true) {
             tracing::debug!(%error, "could not set TCP_NODELAY");
         }
+        let accepted_at = Instant::now();
         let settings = Arc::clone(&settings);
+        let connection_mode = Arc::clone(&connection_mode);
         let session_shutdown = shutdown.clone();
         sessions.spawn(async move {
             tracing::info!(%peer_address, "connection opened");
-            let session_end =
-                run_session(stream, Some(dev_device_id), &settings, session_shutdown).await;
-            tracing::info!(%peer_address, ?session_end, "connection closed");
+            match &*connection_mode {
+                ConnectionMode::DevPlain { dev_device_id } => {
+                    let peer = Peer {
+                        identity: PeerIdentity::Device(*dev_device_id),
+                        address: peer_address,
+                        accepted_at,
+                    };
+                    let session_end = run_session(stream, peer, &settings, session_shutdown).await;
+                    tracing::info!(%peer_address, ?session_end, "connection closed");
+                }
+                ConnectionMode::Tls {
+                    acceptor,
+                    catalog_reader,
+                } => {
+                    let handshake_deadline =
+                        accepted_at + Duration::from_millis(settings.handshake_timeout_ms);
+                    let Some(tls_stream) =
+                        accept_tls(acceptor, stream, peer_address, handshake_deadline).await
+                    else {
+                        return;
+                    };
+                    let Some(identity) = identify_peer(&tls_stream, catalog_reader).await else {
+                        return;
+                    };
+                    tracing::debug!(%peer_address, ?identity, "TLS client identified");
+                    let peer = Peer {
+                        identity,
+                        address: peer_address,
+                        accepted_at,
+                    };
+                    let session_end =
+                        run_session(tls_stream, peer, &settings, session_shutdown).await;
+                    tracing::info!(%peer_address, ?session_end, "connection closed");
+                }
+            }
             drop(slot);
         });
     }
@@ -106,6 +165,64 @@ pub async fn serve_dev_plain(
         .is_err()
     {
         tracing::warn!("sessions still open after the grace time; dropping them");
+    }
+}
+
+/// The TLS handshake, bounded by the handshake deadline. `None` (logged)
+/// when it fails: wrong protocol, a client cert from another CA, or too slow.
+async fn accept_tls(
+    acceptor: &TlsAcceptor,
+    stream: TcpStream,
+    peer_address: SocketAddr,
+    handshake_deadline: Instant,
+) -> Option<TlsStream<TcpStream>> {
+    match tokio::time::timeout_at(handshake_deadline, acceptor.accept(stream)).await {
+        Ok(Ok(tls_stream)) => Some(tls_stream),
+        Ok(Err(error)) => {
+            tracing::info!(%peer_address, %error, "TLS handshake failed");
+            None
+        }
+        Err(_) => {
+            tracing::info!(%peer_address, "TLS handshake timed out");
+            None
+        }
+    }
+}
+
+/// Who the TLS client is, from its certificate. `None` (logged) when the
+/// catalog cannot be read: the connection is dropped without a reply, so a
+/// paired client sees "maybe not paired" and retries later, instead of a
+/// wrong `NOT_PAIRED`.
+async fn identify_peer(
+    tls_stream: &TlsStream<TcpStream>,
+    catalog_reader: &CatalogReader,
+) -> Option<PeerIdentity> {
+    let Some(cert_der) = tls_stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|certs| certs.first())
+    else {
+        return Some(PeerIdentity::NoCertificate);
+    };
+    let fingerprint = CertFingerprint::of_der(cert_der);
+    let catalog_reader = catalog_reader.clone();
+    let lookup =
+        tokio::task::spawn_blocking(move || catalog_reader.device_by_cert(&fingerprint.0)).await;
+    match lookup {
+        Ok(Ok(Some(device))) => Some(PeerIdentity::Device(device.device_id)),
+        Ok(Ok(None)) => {
+            tracing::info!(cert = %fingerprint.short_id(), "client certificate not paired (unknown or revoked)");
+            Some(PeerIdentity::UnknownCertificate)
+        }
+        Ok(Err(error)) => {
+            tracing::error!(%error, "cannot look up the client certificate");
+            None
+        }
+        Err(join_error) => {
+            tracing::error!(%join_error, "certificate lookup task failed");
+            None
+        }
     }
 }
 

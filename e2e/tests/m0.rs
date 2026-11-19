@@ -86,12 +86,27 @@ fn cli_ping_prints_pong() {
 }
 
 #[test]
-fn cli_without_dev_plain_says_tls_comes_later() {
+fn cli_without_dev_plain_and_without_pairing_says_pair_first() {
     let server = DevServer::start().unwrap();
     let address = server.address().to_string();
-    let output = run_cli(&["--server", &address, "ping"]).unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("TLS arrives in M3"));
+    let identity_folder = tempfile::Builder::new()
+        .prefix("htn-e2e-")
+        .tempdir()
+        .unwrap();
+    let identity_directory = identity_folder.path().join("id");
+    let output = run_cli(&[
+        "--server",
+        &address,
+        "--identity-dir",
+        identity_directory.to_str().unwrap(),
+        "ping",
+    ])
+    .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("not paired: run `haotrannas-cli pair` first")
+    );
 }
 
 #[test]
@@ -262,13 +277,18 @@ fn dev_plain_refuses_a_network_address() {
 }
 
 #[test]
-fn run_without_dev_plain_says_tls_comes_later() {
+fn tls_run_needs_an_initialized_data_folder() {
+    let folder = tempfile::Builder::new()
+        .prefix("htn-e2e-")
+        .tempdir()
+        .unwrap();
     let output = std::process::Command::new(server_binary().unwrap())
-        .args(["run", "--listen", "127.0.0.1:0"])
+        .args(["run", "--listen", "127.0.0.1:0", "--data-dir"])
+        .arg(folder.path().join("missing"))
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("TLS mode arrives in M3"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not initialized"));
 }
 
 #[test]

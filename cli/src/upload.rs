@@ -25,7 +25,7 @@ use haotrannas_core::limits::CHUNK_SIZE_BYTES;
 use haotrannas_core::message::Message;
 use haotrannas_core::path_rules::validate_path;
 
-use crate::connection::{ClientError, Connection, connect_plain, unexpected_reply};
+use crate::connection::{ClientError, Connection, Transport, open_connection, unexpected_reply};
 
 /// Device name the cli gives in `Hello`.
 const CLI_DEVICE_NAME: &str = "haotrannas-cli";
@@ -159,14 +159,14 @@ impl LocalFile {
 /// Runs the upload and returns how it ended.
 pub async fn run_upload(
     server_address: &str,
+    transport: &Transport,
     request: &UploadRequest,
 ) -> anyhow::Result<UploadOutcome> {
     let remote_path = remote_path_for(request)?;
     let mut local_file = LocalFile::open(&request.file_path)?;
     let total_chunks = local_file.chunk_list.chunk_hashes.len();
 
-    let stream = connect_plain(server_address).await?;
-    let mut connection = Connection::open(stream, CLI_DEVICE_NAME).await?;
+    let mut connection = open_connection(server_address, transport, CLI_DEVICE_NAME).await?;
     let offer = Message::FileOffer {
         path: remote_path,
         size_bytes: local_file.chunk_list.size_bytes,
