@@ -191,6 +191,49 @@ void main() {
     expect(find.text('Restore to phone'), findsOneWidget);
   });
 
+  testWidgets('Back during a restore asks first', (tester) async {
+    final files = FakeRemoteFiles({})..downloadGate = Completer<void>();
+    await pumpScreen(
+      tester,
+      Builder(
+        builder: (context) => TextButton(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => FileDetailsScreen(
+                files: files,
+                deviceId: 3,
+                remotePath: 'a.bin',
+                entry: fileEntry('a.bin', sizeBytes: 2048),
+              ),
+            ),
+          ),
+          child: const Text('open file'),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open file'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restore to phone'));
+    await tester.pump();
+
+    // Keep restoring: the dialog closes, the restore goes on.
+    await tester.pageBack();
+    await tester.pump();
+    expect(find.text('Stop the restore?'), findsOneWidget);
+    await tester.tap(find.text('Keep restoring'));
+    await tester.pump();
+    expect(find.text('1.0 KB of 2.0 KB'), findsOneWidget);
+
+    // Stop and leave: back on the first screen.
+    await tester.pageBack();
+    await tester.pump();
+    await tester.tap(find.text('Stop and leave'));
+    files.downloadGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('open file'), findsOneWidget);
+    expect(find.text('Restore to phone'), findsNothing);
+  });
+
   testWidgets('not connected: Connect asks the connection', (tester) async {
     final connection = FakeServerConnection(const ServerOffline());
     await pumpScreen(

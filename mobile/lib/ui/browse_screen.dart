@@ -424,6 +424,45 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
     final entry = widget.entry;
     final progress = _progress;
     final result = _result;
+    // Back during a restore asks first: leaving would cancel it.
+    return PopScope(
+      canPop: !_isRestoring,
+      onPopInvokedWithResult: (didPop, _) => didPop ? null : _askStopRestore(),
+      child: _scaffold(entry, progress, result),
+    );
+  }
+
+  /// "Stop the restore?": Stop cancels it and leaves the screen.
+  Future<void> _askStopRestore() async {
+    final isStop = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Stop the restore?'),
+        content: const Text(
+          'Leaving this screen stops the restore. Nothing is saved.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep restoring'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Stop and leave'),
+          ),
+        ],
+      ),
+    );
+    if (isStop != true || !mounted) return;
+    _cancel?.cancel();
+    Navigator.of(context).pop();
+  }
+
+  Widget _scaffold(
+    DirEntry entry,
+    DownloadProgress? progress,
+    DownloadResult? result,
+  ) {
     return Scaffold(
       appBar: AppBar(title: Text(entry.name)),
       body: ListView(
