@@ -40,6 +40,13 @@ const appClientSoftware = 'haotrannas-mobile 0.1.0';
 /// overrides it with [addToPhoneGallery] on Android.
 final addToGalleryProvider = Provider<AddToGallery?>((ref) => null);
 
+/// Opens this app's page in the phone's Settings (photo access). Null
+/// (tests) = no button. `main()` overrides it with photo_manager's
+/// `PhotoManager.openSetting`.
+final openAppSettingsProvider = Provider<Future<void> Function()?>(
+  (ref) => null,
+);
+
 /// The real backup side over [store]; `main()` overrides
 /// [backupStatusSourceProvider] with it. Foreground runs may use mDNS;
 /// the background job uses cached addresses only (D-012).

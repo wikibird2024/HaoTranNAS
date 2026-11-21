@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:haotrannas_client/backup/backup_state_store.dart';
 import 'package:haotrannas_client/client/identity.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:photo_manager/photo_manager.dart' show PhotoManager;
 import 'package:sqflite/sqflite.dart' show databaseFactory;
 
 import 'app/app_start.dart';
@@ -28,6 +29,8 @@ Future<void> main() async {
         ),
         if (Platform.isAndroid || Platform.isIOS)
           addToGalleryProvider.overrideWithValue(addToPhoneGallery),
+        if (Platform.isAndroid || Platform.isIOS)
+          openAppSettingsProvider.overrideWithValue(PhotoManager.openSetting),
         backupStatusSourceProvider.overrideWith(
           (ref) => appBackupStatusSource(ref, backupStore),
         ),

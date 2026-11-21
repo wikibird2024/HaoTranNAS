@@ -2,6 +2,7 @@
 // and connection; App start choosing Pairing or Status. Author: Hao Tran.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
 import 'package:haotrannas_mobile/app/app_start.dart';
@@ -29,6 +30,7 @@ void main() {
     WidgetTester tester,
     Widget screen, {
     bool isAnimating = false,
+    List<Override> extraOverrides = const [],
   }) => pumpScreen(
     tester,
     screen,
@@ -40,6 +42,7 @@ void main() {
       serverFinderProvider.overrideWithValue(
         ({pinnedFingerprintPrefix}) async => const [],
       ),
+      ...extraOverrides,
     ],
   );
 
@@ -209,10 +212,45 @@ void main() {
       expect(find.textContaining('nothing is backed up'), findsOneWidget);
     });
 
-    testWidgets('no albums: tells how to allow photo access', (tester) async {
+    testWidgets('no albums: open settings, list again on coming back', (
+      tester,
+    ) async {
+      var openSettingsCalls = 0;
+      await pumpWithFakes(
+        tester,
+        const FoldersScreen(),
+        extraOverrides: [
+          openAppSettingsProvider.overrideWithValue(
+            () async => openSettingsCalls++,
+          ),
+        ],
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('No albums found'), findsOneWidget);
+
+      await tester.tap(find.text('Open phone settings'));
+      expect(openSettingsCalls, 1);
+
+      // The user allows access in Settings and comes back to the app.
+      source.folders = const [
+        BackupFolderChoice(
+          id: 'cam',
+          name: 'Camera',
+          itemCount: 5,
+          isChosen: true,
+        ),
+      ];
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('Camera'), findsOneWidget);
+    });
+
+    testWidgets('no albums, no settings page: only Try again', (tester) async {
       await pumpWithFakes(tester, const FoldersScreen());
       await tester.pumpAndSettle();
-      expect(find.textContaining('Allow access to photos'), findsOneWidget);
+      expect(find.text('Open phone settings'), findsNothing);
+      expect(find.text('Try again'), findsOneWidget);
     });
   });
 

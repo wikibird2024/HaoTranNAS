@@ -31,10 +31,20 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
   /// The raw reason under [_problem]; null = none.
   String? _problemDetail;
 
+  /// Lists again when the user comes back from the phone's Settings.
+  late final AppLifecycleListener _lifecycle;
+
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _load);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -49,10 +59,8 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
             for (final folder in folders)
               if (folder.isChosen) folder.id,
           ]);
-        _problem = folders.isEmpty
-            ? 'No albums found. Allow access to photos and videos in the '
-                  "phone's Settings, then come back."
-            : null;
+        _problem = null;
+        _problemDetail = null;
       });
     } on Exception catch (error) {
       if (!mounted) return;
@@ -103,6 +111,10 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
           onRetry: _retry,
         ),
         (null, _) => const Center(child: CircularProgressIndicator()),
+        (final List<BackupFolderChoice> list, _) when list.isEmpty => _NoAlbums(
+          openSettings: ref.read(openAppSettingsProvider),
+          onRetry: _retry,
+        ),
         (final List<BackupFolderChoice> list, _) => ListView(
           children: [
             Padding(
@@ -128,6 +140,45 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
           ],
         ),
       },
+    );
+  }
+}
+
+/// No album to show: photo access is off, or the phone has no photos.
+/// The list reloads by itself when the user comes back from Settings.
+class _NoAlbums extends StatelessWidget {
+  const _NoAlbums({required this.openSettings, required this.onRetry});
+
+  /// Null = this phone has no settings page to open (tests).
+  final Future<void> Function()? openSettings;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final openSettings = this.openSettings;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'No albums found. The app may not have access to your photos '
+              'and videos: allow it in the phone\'s Settings, then come back.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            if (openSettings != null)
+              FilledButton.icon(
+                onPressed: openSettings,
+                icon: const Icon(Icons.settings),
+                label: const Text('Open phone settings'),
+              ),
+            const SizedBox(height: 8),
+            OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
+          ],
+        ),
+      ),
     );
   }
 }
