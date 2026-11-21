@@ -14,6 +14,7 @@ import 'package:haotrannas_client/backup/backup_status_source.dart';
 import 'package:haotrannas_client/text/formatting.dart';
 
 import '../app/providers.dart';
+import 'problem_view.dart';
 
 class FoldersScreen extends ConsumerStatefulWidget {
   const FoldersScreen({super.key});
@@ -26,6 +27,9 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
   List<BackupFolderChoice>? _folders;
   final _chosenIds = <String>{};
   String? _problem;
+
+  /// The raw reason under [_problem]; null = none.
+  String? _problemDetail;
 
   @override
   void initState() {
@@ -51,8 +55,22 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
             : null;
       });
     } on Exception catch (error) {
-      if (mounted) setState(() => _problem = 'Could not list albums: $error');
+      if (!mounted) return;
+      setState(() {
+        _problem = 'Could not list the albums on this phone.';
+        _problemDetail = '$error';
+      });
     }
+  }
+
+  /// Back to the spinner, then list again.
+  void _retry() {
+    setState(() {
+      _folders = null;
+      _problem = null;
+      _problemDetail = null;
+    });
+    _load();
   }
 
   void _setChosen(String folderId, bool isChosen) {
@@ -79,11 +97,10 @@ class _FoldersScreenState extends ConsumerState<FoldersScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Folders to back up')),
       body: switch ((folders, problem)) {
-        (_, final String text) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(text, textAlign: TextAlign.center),
-          ),
+        (_, final String text) => ProblemView(
+          text,
+          detail: _problemDetail,
+          onRetry: _retry,
         ),
         (null, _) => const Center(child: CircularProgressIndicator()),
         (final List<BackupFolderChoice> list, _) => ListView(

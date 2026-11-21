@@ -23,6 +23,7 @@ import 'package:haotrannas_client/text/formatting.dart';
 
 import '../app/providers.dart';
 import '../backup/gallery.dart' show galleryKindOf;
+import 'problem_view.dart';
 
 /// Entries asked for per ListDir page (the spec allows up to 1000; a
 /// smaller page shows the first rows sooner).
@@ -91,7 +92,7 @@ class _DeviceListState extends State<_DeviceList> {
     future: _devices,
     builder: (context, snapshot) {
       if (snapshot.hasError) {
-        return _ProblemText(
+        return ProblemView(
           'Could not get the list from the NAS.',
           detail: '${snapshot.error}',
           onRetry: () => setState(() => _devices = widget.files.listDevices()),
@@ -137,37 +138,6 @@ class _DeviceListState extends State<_DeviceList> {
         ],
       );
     },
-  );
-}
-
-class _ProblemText extends StatelessWidget {
-  const _ProblemText(this.text, {this.detail, required this.onRetry});
-
-  final String text;
-
-  /// The raw reason, shown small under [text]; null = none.
-  final String? detail;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(text, textAlign: TextAlign.center),
-          if (detail != null)
-            Text(
-              detail!,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          const SizedBox(height: 8),
-          OutlinedButton(onPressed: onRetry, child: const Text('Try again')),
-        ],
-      ),
-    ),
   );
 }
 
@@ -269,7 +239,7 @@ class _FolderScreenState extends State<FolderScreen> {
   Widget _tailTile() {
     final problem = _problem;
     if (problem != null) {
-      return _ProblemText(
+      return ProblemView(
         problem,
         detail: _problemDetail,
         onRetry: _loadNextPage,
@@ -428,8 +398,9 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
       );
       return 'Saved to the gallery, album "${place.split('/').last}".';
     } on Object catch (error) {
-      return 'Restored, but the gallery refused it ($error). It is kept '
-          'inside this app.';
+      ref.read(sessionLogProvider).note('gallery refused $localPath: $error');
+      return 'Restored, but the gallery did not take it, so it is kept '
+          'inside this app. Details are in Settings › Debug log.';
     }
   }
 

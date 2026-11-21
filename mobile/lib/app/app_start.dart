@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../ui/pairing_screen.dart';
 import '../ui/home_screen.dart';
+import '../ui/problem_view.dart';
 import 'providers.dart';
 
 class AppStart extends ConsumerWidget {
@@ -23,7 +24,11 @@ class AppStart extends ConsumerWidget {
       ),
       AsyncData() => const HomeScreen(),
       AsyncError(:final error) => Scaffold(
-        body: Center(child: Text('Could not read the pairing: $error')),
+        body: ProblemView(
+          'Could not read the pairing on this phone.',
+          detail: '$error',
+          onRetry: () => ref.invalidate(identityProvider),
+        ),
       ),
       _ => const Scaffold(body: Center(child: CircularProgressIndicator())),
     };

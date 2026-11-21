@@ -173,10 +173,17 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                 : identity.withAddresses(KnownAddresses(lastLan: address)),
           );
         } on Object catch (error) {
+          ref
+              .read(sessionLogProvider)
+              .note('saving the pairing failed: $error');
           if (!mounted) return;
           setState(() {
             _isSubmitting = false;
-            _showProblem('Could not save the pairing', '$error');
+            _showProblem(
+              'Could not save the pairing',
+              'The phone could not store the pairing. Pair again; if it '
+                  'keeps failing, restart the app.',
+            );
           });
           return;
         }
