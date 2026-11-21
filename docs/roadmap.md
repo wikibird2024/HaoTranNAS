@@ -1,6 +1,6 @@
 # HaoTranNAS — Roadmap
 
-Author: Hao Tran · Updated: 2026-11-19
+Author: Hao Tran · Updated: 2026-11-21
 
 Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · 🔴 blocked
 
@@ -10,6 +10,7 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
  Phase 0 ──► M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M5 ──► M6 ──► M7 ──► M8 (iPhone)
   done      done   done   done   done   ▲ HERE: M4–M6 code done and checked on the PC; phone + NAS checks open
                                           M8: code started 2026-11-19 in parallel, on Hao's call
+                                          M9 (Yocto image, Pi 5): started 2026-11-21 in parallel, on Hao's call
 ```
 
 ## Phase 0: foundation
@@ -40,6 +41,7 @@ been shown. Code alone doesn't count.
 | M6 | Remote + upkeep: WireGuard, scrub, cleanup, phone "verify backup" | nas, server, mobile | Networking, data care | Backup works on 4G; scrub report clean; a corrupted chunk is repaired by verify | 🟡 scrub, cleanup, heal by re-upload proven in `e2e/tests/m6.rs` 2026-11-19; 4G (WireGuard) + phone verify open |
 | M7 | Desktop app | desktop, dart_client | Reusing the Dart client, desktop UI, admin over SSH | PC folder backed up and restored | 🟢 2026-11-19 `e2e/scripts/desktop_vs_server.sh`: PC folder (nested, 20 MiB, Unicode, symlink skipped) backed up and restored, every SHA-256 matches; real app on this PC: one-click pairing, 66 files backed up, phone photos browsed, scrub clean. ⚪ SSH admin to the real NAS (M3n), folder picker by hand |
 | M8 | iPhone app (same Flutter app, D-043) | mobile | iOS limits: Bonjour, no background work, signing | On a real iPhone: pair, back up a photo by opening the app, restore it; hash matches | 🟡 2026-11-19 code: `ios/` folder, Bonjour finder, iPhone photo folders, restore to Photos, auto backup on open; CI builds an unsigned IPA. ⚪ sideload + every iPhone check (mobile/README) |
+| M9 | NAS image built with Yocto for the Raspberry Pi 5 (D-044 to D-046) | yocto | Yocto: layers, recipes, distro, image, cross-build | On a real Pi 5: the image boots, is found as `nas.local`, `haotrannas-server` runs as a service and survives a reboot, and a phone backs up to it | 🟡 2026-11-21: `yocto/` started (kas file, layer, distro, image: boot + SSH + mdadm + avahi). ⚪ first build blocked on this PC by Ubuntu's user-namespace limit (yocto/README); ⚪ server recipe; ⚪ every Pi 5 check |
 
 ## Build order and why
 

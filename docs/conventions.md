@@ -17,6 +17,7 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
 | `desktop/` | Flutter PC app (M7): folder source, admin client, PC UI | Re-implement anything `dart_client` has |
 | `mobile/` | Flutter phone app: photo source, background jobs, phone UI | Change the wire format without changing `protocol/` first; hold logic the PC app also needs |
 | `nas/` | Host setup: ZFS, WireGuard, systemd, config, backup scripts | Contain application code |
+| `yocto/` | kas files, `meta-haotrannas` layer: distro, image, recipes that package our programs (D-044) | Contain application code; edit downloaded layers (`bitbake/`, `openembedded-core/`, `meta-raspberrypi/`): change them with a `.bbappend` in our layer |
 | `e2e/` | End-to-end tests: cli ⇄ server | Depend on a real phone |
 
 ## 2. Who may depend on whom
@@ -30,7 +31,7 @@ change it here first (with a row in `decisions.md`), then follow the new rule.
         │    │     │       │
    server   cli  mobile  desktop      e2e ──► cli + server (as programs)
 
-   nas: no code dependencies; it runs the server
+   nas, yocto: no code dependencies; they run the server
 ```
 
 | Allowed | Forbidden |

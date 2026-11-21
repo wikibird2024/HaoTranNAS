@@ -1,0 +1,13 @@
+# Settings for Hao's build PC only, not part of the product.
+# 15 GB RAM: limit parallel work so the build does not run out of memory.
+header:
+  version: 11
+
+local_conf_header:
+  local-pc: |
+    BB_NUMBER_THREADS = "8"
+    PARALLEL_MAKE = "-j 8"
+    INHERIT += "rm_work"
+    # Bench test only: root login with no password, on serial and SSH.
+    # Never ship an image built with this line (D-044).
+    OE_FRAGMENTS += "core/yocto/root-login-with-empty-password"

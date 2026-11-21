@@ -1,6 +1,6 @@
 # HaoTranNAS — Architecture
 
-Author: Hao Tran · Status: Draft v0.4 · 2026-11-19
+Author: Hao Tran · Status: Draft v0.5 · 2026-11-21
 
 Read first: [concepts.md](concepts.md), the ideas this design rests on.
 See also: [community-research.md](community-research.md), the projects this design borrows from.
@@ -306,6 +306,7 @@ it can never race an upload.
 ### Disks
 
 🟢 Borrowed: ZFS mirror or mdadm RAID1 under `/srv/haotrannas`.
+🟡 The Yocto image (M9, Raspberry Pi 5) uses mdadm RAID1 only (D-046).
 🟡 RAID is not a backup. Later: copy the whole store to a second disk or offsite
 (restic).
 
@@ -360,6 +361,7 @@ it can never race an upload.
                               ┌───────────────────────────┐
                               │ nas: Linux, ZFS mirror,   │
                               │ WireGuard, systemd, backup│
+                              │ or yocto: Pi 5 image (M9) │
                               └───────────────────────────┘
 ```
 
@@ -374,6 +376,7 @@ it can never race an upload.
    desktop/    Flutter PC app (M7)
    mobile/     Flutter phone app (patterns copied from Protocol Lab)
    nas/        host setup: ZFS, WireGuard, systemd, config
+   yocto/      NAS image built with Yocto for the Raspberry Pi 5 (M9, D-044)
    e2e/        cli ⇄ server end-to-end tests
 ```
 

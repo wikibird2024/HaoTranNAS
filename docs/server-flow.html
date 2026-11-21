@@ -1,0 +1,693 @@
+<title>HaoTranNAS Server Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: a network-simulator workbench. Map on top, then event list + packet inspector side by side. */
+:root {
+  --bg: #eef2f4;
+  --surface: #ffffff;
+  --fg: #16212b;
+  --muted: #5a6a77;
+  --line: #c9d3da;
+  --wire: #7d8c97;
+  --accent: #0d7480;
+  --accent-soft: #d8eef0;
+  --nas: #e6ecef;
+  --p-tls: #6f7d88;
+  --p-hello: #0d7480;
+  --p-offer: #2f62b5;
+  --p-chunk: #7a4fb8;
+  --p-commit: #2f7d4a;
+  --p-close: #46525c;
+  --p-error: #c2392f;
+  --p-job: #b07a12;
+  --p-db: #c0601c;
+  --p-disk: #8a5a3c;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1418; --surface: #161f25; --fg: #e2e9ee; --muted: #93a3af; --line: #2b3842; --wire: #66757f;
+    --accent: #4cc0cc; --accent-soft: #163a3f; --nas: #1b262d;
+    --p-tls: #93a1ab; --p-hello: #4cc0cc; --p-offer: #6f9cf0; --p-chunk: #b18cf0; --p-commit: #6cc48b;
+    --p-close: #a7b3bc; --p-error: #f07b70; --p-job: #e0b04a; --p-db: #f0955a; --p-disk: #c99a78;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1418; --surface: #161f25; --fg: #e2e9ee; --muted: #93a3af; --line: #2b3842; --wire: #66757f;
+  --accent: #4cc0cc; --accent-soft: #163a3f; --nas: #1b262d;
+  --p-tls: #93a1ab; --p-hello: #4cc0cc; --p-offer: #6f9cf0; --p-chunk: #b18cf0; --p-commit: #6cc48b;
+  --p-close: #a7b3bc; --p-error: #f07b70; --p-job: #e0b04a; --p-db: #f0955a; --p-disk: #c99a78;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.5 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 22px 40px;
+}
+main { max-width: 1180px; margin: 0 auto; display: grid; gap: 14px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.5rem, 3.5vw, 2rem); }
+h2 { font-size: 1rem; }
+p { margin: 0; max-width: 72ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+.lead { color: var(--muted); }
+
+/* toolbar */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.group label { font: 500 0.72rem/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+button, select { font: 500 0.88rem/1 var(--font-body); padding: 9px 13px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+button:hover, select:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); min-width: 6.5em; }
+.counter { margin-left: auto; font: 500 0.85rem/1 var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* map */
+.map { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.map svg { display: block; width: 100%; min-width: 780px; height: auto; }
+svg text { font-family: var(--font-body); fill: var(--fg); }
+svg .sub { font-family: var(--font-mono); font-size: 10.5px; fill: var(--muted); }
+svg .name { font-size: 13px; font-weight: 600; }
+svg .zone { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); letter-spacing: 0.06em; }
+.node { cursor: pointer; }
+.node .body { fill: var(--surface); stroke: var(--wire); stroke-width: 1.5; transition: stroke 0.2s, stroke-width 0.2s; }
+.node.idle .body { stroke-dasharray: 4 3; }
+.node.idle text { opacity: 0.6; }
+.node.hot .body { stroke: var(--accent); stroke-width: 3; }
+.node.picked .body { stroke: var(--accent); stroke-width: 2.5; }
+.node:focus-visible .body { stroke: var(--accent); stroke-width: 3; }
+.node:focus { outline: none; }
+.link { stroke: var(--wire); stroke-width: 2; fill: none; }
+.link.thin { stroke-dasharray: 5 4; stroke-width: 1.4; }
+.badge rect { fill: var(--accent-soft); }
+.badge text { font-family: var(--font-mono); font-size: 10.5px; fill: var(--accent); font-weight: 500; }
+
+/* below the map */
+.panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .panes { grid-template-columns: minmax(0, 1fr); } }
+.pane { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; display: grid; min-width: 0; }
+.pane-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.pane-head span { font: 0.75rem/1 var(--font-mono); color: var(--muted); }
+.events { max-height: 380px; overflow: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.84rem; }
+th { position: sticky; top: 0; background: var(--surface); text-align: left; font: 500 0.7rem/1.2 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.num { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; width: 2.6em; text-align: right; }
+.row { cursor: pointer; }
+.row:hover td { background: color-mix(in srgb, var(--accent-soft) 50%, transparent); }
+.row.picked td { background: var(--accent-soft); }
+.swatch { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 7px; vertical-align: 0; background: var(--sw); }
+.empty { padding: 18px 14px; color: var(--muted); font-size: 0.88rem; }
+
+.inspector { padding: 14px; display: grid; gap: 12px; }
+.inspector .kicker { font: 500 0.75rem/1.2 var(--font-mono); color: var(--muted); }
+.inspector h3 { font-size: 1.2rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inspector .type-pill { font: 500 0.75rem/1 var(--font-mono); padding: 4px 8px; border-radius: 4px; color: var(--surface); background: var(--sw); }
+.route { font-size: 0.88rem; }
+.layers { display: grid; gap: 8px; }
+.layer { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.layer-name { font: 500 0.72rem/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; padding: 7px 10px; background: var(--bg); color: var(--muted); }
+.layer dl { margin: 0; padding: 8px 10px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 14px; font-size: 0.82rem; }
+.layer dt { font-family: var(--font-mono); color: var(--muted); }
+.layer dd { margin: 0; font-family: var(--font-mono); word-break: break-word; }
+.where { font: 0.8rem/1.3 var(--font-mono); color: var(--muted); word-break: break-all; }
+.example-note { font-size: 0.78rem; color: var(--muted); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+footer { color: var(--muted); font-size: 0.8rem; }
+</style>
+
+<main>
+  <header style="display:grid;gap:6px">
+    <h1>HaoTranNAS Server Flow</h1>
+    <p class="lead">A packet simulator for the Rust server. Each envelope is one message. Press <b>Play</b> or <b>Step</b> and watch where it goes. Click an event or a device to open it.</p>
+  </header>
+
+  <div class="toolbar">
+    <div class="group">
+      <label for="scenario">Scenario</label>
+      <select id="scenario">
+        <option value="upload">Upload a new photo</option>
+        <option value="again">Upload the same photo again</option>
+        <option value="unpaired">Laptop that is not paired</option>
+      </select>
+    </div>
+    <div class="group">
+      <button type="button" id="reset" title="Back to the start">Reset</button>
+      <button type="button" id="back" title="One event back">◀ Back</button>
+      <button type="button" id="play" class="primary">▶ Play</button>
+      <button type="button" id="step" title="One event forward">Step ▶</button>
+    </div>
+    <div class="group">
+      <label for="speed">Speed</label>
+      <select id="speed">
+        <option value="1600">Slow</option>
+        <option value="900" selected>Normal</option>
+        <option value="400">Fast</option>
+      </select>
+    </div>
+    <span class="counter" id="counter">0 / 0</span>
+  </div>
+
+  <div class="map">
+    <svg id="map" viewBox="0 0 1000 520" role="img" aria-label="Network map: laptop, home router, and the NAS server with its listener, session task, blocking pool, writer thread, catalog database and chunk files.">
+      <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <rect x="400" y="22" width="588" height="486" rx="14" fill="var(--nas)" stroke="var(--line)"/>
+      <text x="418" y="46" class="zone">NAS · haotrannas-server run · one process</text>
+      <text x="418" y="494" class="sub">main thread: waits for Ctrl-C / SIGTERM, then tells every loop to stop</text>
+      <text x="40" y="46" class="zone">HOME LAN</text>
+      <g id="links"></g>
+      <g id="nodes"></g>
+      <g id="packet" style="display:none" filter="url(#glow)">
+        <rect x="-21" y="-14" width="42" height="28" rx="3" id="packet-body"/>
+        <path d="M-21,-14 L0,3 L21,-14" fill="none" stroke="var(--surface)" stroke-width="2"/>
+        <text id="packet-label" x="0" y="30" text-anchor="middle" style="font-family:var(--font-mono);font-size:11px;font-weight:600"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="panes">
+    <section class="pane" aria-labelledby="events-h">
+      <div class="pane-head"><h2 id="events-h">Event list</h2><span>newest at the bottom</span></div>
+      <div class="events" id="events-box">
+        <table>
+          <thead><tr><th>#</th><th>From</th><th>At device</th><th>Type</th></tr></thead>
+          <tbody id="events"></tbody>
+        </table>
+        <div class="empty" id="events-empty">No events yet. Press Play or Step.</div>
+      </div>
+    </section>
+    <section class="pane" aria-labelledby="inspector-h">
+      <div class="pane-head"><h2 id="inspector-h">Inspector</h2><span id="inspector-kind">event</span></div>
+      <div class="inspector" id="inspector" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <footer>Hao Tran · HaoTranNAS · drawn from the code at commit b77fb77, 2026-11-20. Field names come from <code>core/src/message.rs</code>. Ids, hashes and sizes in the scenarios are example values.</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- devices on the map ---------- */
+  var nodes = {
+    pc:       { x: 100, y: 260, name: "Laptop", sub: "haotrannas-cli", shape: "laptop",
+                who: "The client program (its own process, one thread)", wakes: "you run a command", job: "hash the file, send requests, wait for each reply", where: "cli/src/main.rs:155" },
+    router:   { x: 280, y: 260, name: "Home router", sub: "LAN", shape: "router",
+                who: "Network gear, not our code", wakes: "a packet", job: "forwards TCP packets to the NAS", where: "not in the repo" },
+    listener: { x: 480, y: 260, name: "Listener", sub: "port 47100", shape: "box",
+                who: "One async task", wakes: "a new TCP connection", job: "take one of 64 slots, start a session task", where: "server/src/listener.rs:74" },
+    session:  { x: 660, y: 260, name: "Session task", sub: "1 per connection", shape: "box",
+                who: "One async task per connection", wakes: "a frame, a timeout, or stop", job: "read frame, check state, handle, reply, one at a time", where: "server/src/session.rs:136" },
+    writer:   { x: 660, y: 105, name: "Writer thread", sub: "catalog-writer", shape: "box",
+                who: "One OS thread, the only DB writer", wakes: "a job in its queue (64 max)", job: "run each write in order, send the result back", where: "server/src/catalog/writer.rs:125" },
+    db:       { x: 880, y: 105, name: "Catalog DB", sub: "SQLite, WAL", shape: "cylinder",
+                who: "A file on disk", wakes: "SQL from the writer or a reader", job: "devices, uploads, chunks, versions", where: "server/src/catalog/schema.rs" },
+    pool:     { x: 660, y: 420, name: "Blocking pool", sub: "spawn_blocking", shape: "box",
+                who: "Extra threads for slow work", wakes: "a job from a session", job: "SHA-256, chunk files, catalog reads", where: "server/src/handlers/upload.rs:162" },
+    disk:     { x: 880, y: 420, name: "Chunk files", sub: "chunks/ab/cd/…", shape: "cylinder",
+                who: "Files on disk, one per chunk", wakes: "a write or read from the pool", job: "store each 1 MiB chunk once, named by its hash", where: "server/src/chunk_store.rs:258" },
+    jobs:     { x: 880, y: 262, name: "Scrub + cleanup", sub: "every 168 h / 60 min", shape: "box", idle: true,
+                who: "Two async loops (asleep in these scenarios)", wakes: "a timer, or admin scrub-now", job: "re-check chunk hashes; drop old uploads and unused chunks", where: "server/src/jobs/mod.rs:186" }
+  };
+  var links = [
+    ["pc", "router"], ["router", "listener"], ["listener", "session"],
+    ["session", "writer"], ["writer", "db"], ["session", "pool"], ["pool", "disk"],
+    ["pool", "db", "thin"], ["jobs", "disk", "thin"], ["jobs", "writer", "thin"]
+  ];
+
+  /* ---------- packet kinds ---------- */
+  var kinds = {
+    TLS:      { color: "--p-tls",    text: "TLS handshake" },
+    Hello:    { color: "--p-hello",  text: "Hello / HelloOk" },
+    Offer:    { color: "--p-offer",  text: "FileOffer / NeedChunks" },
+    Chunk:    { color: "--p-chunk",  text: "ChunkData / ChunkOk" },
+    Commit:   { color: "--p-commit", text: "Commit / CommitOk" },
+    Close:    { color: "--p-close",  text: "Close" },
+    Error:    { color: "--p-error",  text: "Error" },
+    Job:      { color: "--p-job",    text: "Job for the pool" },
+    DB:       { color: "--p-db",     text: "DB write job" },
+    Disk:     { color: "--p-disk",   text: "Disk read / write" }
+  };
+
+  /* ---------- helpers that build events ---------- */
+  var WIRE_IN = ["pc", "router", "listener", "session"];
+  var WIRE_OUT = ["session", "listener", "router", "pc"];
+  var TLS_LAYERS = [
+    { name: "TCP", fields: [["to port", "47100"], ["option", "TCP_NODELAY (server side)"]] },
+    { name: "TLS 1.3", fields: [["mode", "mutual TLS: both sides show a certificate"], ["content", "encrypted"]] }
+  ];
+  function frame(typeName, typeCode, requestId, payload) {
+    return TLS_LAYERS.concat([
+      { name: "Frame header (10 bytes)", fields: [["length", "u32: type + id + payload"], ["message type", typeCode + " " + typeName], ["request_id", String(requestId)]] },
+      { name: "Payload: " + typeName, fields: payload }
+    ]);
+  }
+  function inside(fields) { return [{ name: "Inside the server (no network)", fields: fields }]; }
+
+  var HASH_FILE = "9c41…e07a", HASH_0 = "3f9a…11c2", HASH_1 = "b07e…5d90";
+
+  function connect(paired) {
+    var list = [
+      { route: ["pc", "router"], kind: "TLS", label: "TCP+TLS", title: "Open a connection",
+        text: "The CLI connects over TCP (3 s limit) and starts TLS 1.3." + (paired ? " It will show its device certificate." : " This laptop has no device certificate."),
+        layers: TLS_LAYERS, where: "cli/src/connection.rs:125" },
+      { route: ["router", "listener"], kind: "TLS", label: "TCP+TLS", title: "Accept",
+        text: "The listener accepts the connection and takes a free slot (64 max). A 10 s clock for the handshake starts now.",
+        layers: TLS_LAYERS, where: "server/src/listener.rs:87", effect: { slots: 1 } },
+      { route: ["listener", "session"], kind: "Job", label: "spawn", title: "Start a session task",
+        text: "The listener spawns one session task for this connection, then goes back to waiting. From now on the session task owns the socket.",
+        layers: inside([["call", "sessions.spawn(…)"], ["state", "AwaitingHello"]]), where: "server/src/listener.rs:116", effect: { state: "AwaitingHello" } },
+      { route: WIRE_OUT, kind: "TLS", label: "TLS", title: "TLS reply: server certificate",
+        text: "The server sends its certificate and asks for the client's one. The CLI checks the server's fingerprint against the one saved at pairing.",
+        layers: TLS_LAYERS, where: "server/src/listener.rs:135" },
+      { route: WIRE_IN, kind: "TLS", label: "TLS", title: paired ? "TLS done: client certificate" : "TLS done: no certificate",
+        text: paired ? "The CLI shows its device certificate. The handshake is finished." : "The laptop finishes TLS without a client certificate. That is allowed: it can still pair, ping or close.",
+        layers: TLS_LAYERS, where: "server/src/listener.rs:135" }
+    ];
+    if (paired) {
+      list.push(
+        { route: ["session", "pool"], kind: "Job", label: "lookup", title: "Who is this device?",
+          text: "The certificate fingerprint is looked up in the catalog. That is a blocking SQLite read, so it runs on the blocking pool.",
+          layers: inside([["job", "catalog_reader.device_by_cert(fingerprint)"]]), where: "server/src/listener.rs:211" },
+        { route: ["pool", "db"], kind: "Disk", label: "SELECT", title: "Read the devices table",
+          text: "A read-only query. In WAL mode, reads do not wait for the writer thread.",
+          layers: inside([["query", "device with this cert, not revoked"], ["found", "device 3 (example)"]]), where: "server/src/catalog/reader.rs" },
+        { route: ["pool", "session"], kind: "Job", label: "device 3", title: "Known device",
+          text: "The fingerprint belongs to device 3, which is paired and not revoked.",
+          layers: inside([["result", "PeerIdentity::Device(3)"]]), where: "server/src/listener.rs:213" }
+      );
+    }
+    list.push(
+      { route: WIRE_IN, kind: "Hello", label: "Hello", title: "Hello",
+        text: "The first frame. In AwaitingHello, the state machine allows only Hello.",
+        layers: frame("Hello", "0x0001", 1, [["protocol_version", "1"], ["client_software", "haotrannas-cli/0.1.0"], ["device_name", "haotrannas-cli"]]),
+        where: "server/src/session.rs:217" },
+      { route: WIRE_OUT, kind: "Hello", label: "HelloOk", title: "HelloOk",
+        text: paired ? "Paired certificate → the state moves to Ready. Every request is allowed now." : "No certificate → state Unpaired, device_id 0. Only pairing, Ping and Close are allowed.",
+        layers: frame("HelloOk", "0x0002", 1, [["protocol_version", "1"], ["server_software", "haotrannas-server/0.1.0"], ["server_name", "haotrannas"], ["device_id", paired ? "3" : "0 (not paired)"], ["chunk_size_bytes", "1048576"], ["max_frame_length_bytes", "4194304"]]),
+        where: "server/src/handlers/hello.rs", effect: { state: paired ? "Ready" : "Unpaired" } }
+    );
+    return list;
+  }
+
+  function offer() {
+    return [
+      { route: WIRE_IN, kind: "Offer", label: "FileOffer", title: "FileOffer",
+        text: "The CLI already hashed the file in 1 MiB chunks. It offers the path, size, file hash and the list of chunk hashes. No file bytes yet.",
+        layers: frame("FileOffer", "0x0201", 2, [["path", "photo.jpg"], ["size_bytes", "1468006 (1.4 MiB)"], ["modified_time_ms", "1763600000000"], ["file_sha256", HASH_FILE], ["chunk_hashes", "[" + HASH_0 + ", " + HASH_1 + "]"]]),
+        where: "cli/src/upload.rs:182" },
+      { route: ["session", "writer"], kind: "DB", label: "offer_file", title: "Check the offer, ask the writer",
+        text: "The session checks path rules and that 2 hashes fit 1.4 MiB. Then it queues a job for the writer thread and waits for its reply.",
+        layers: inside([["checks", "validate_path, chunk count = ceil(size / 1 MiB)"], ["job", "catalog_writer.offer_file(device 3, …)"], ["queue", "mpsc, 64 jobs max"]]),
+        where: "server/src/handlers/upload.rs:62" }
+    ];
+  }
+
+  function chunk(index, requestId, sizeText, hash) {
+    return [
+      { route: WIRE_IN, kind: "Chunk", label: "ChunkData", title: "ChunkData #" + index,
+        text: "One chunk of file bytes. The CLI waits for ChunkOk before it sends the next one.",
+        layers: frame("ChunkData", "0x0203", requestId, [["upload_id", "77"], ["chunk_index", String(index)], ["chunk_sha256", hash], ["data", sizeText]]),
+        where: "cli/src/upload.rs:271" },
+      { route: ["session", "pool"], kind: "Job", label: "store", title: "Check, then store on the pool",
+        text: "The session checks the index, the offered hash and the size. Hashing and file writes are slow, so they run on the blocking pool.",
+        layers: inside([["job", "store_chunk(…)"], ["first", "SHA-256(data) must equal " + hash]]),
+        where: "server/src/handlers/upload.rs:162" },
+      { route: ["pool", "disk"], kind: "Disk", label: "fsync", title: "Safe write",
+        text: "Write to tmp/, fsync, read back and hash again, then rename into chunks/ab/cd/ and fsync the folder. A power cut never leaves a half chunk.",
+        layers: inside([["steps", "tmp → fsync → re-hash → rename → fsync folder"], ["file", "chunks/" + hash.slice(0, 2) + "/…/" + hash]]),
+        where: "server/src/chunk_store.rs:258" },
+      { route: ["pool", "session"], kind: "Job", label: "written", title: "Chunk is on disk",
+        text: "The pool hands the result back to the session task.",
+        layers: inside([["result", "StoreStep::Written"]]), where: "server/src/handlers/upload.rs:171" },
+      { route: ["session", "writer"], kind: "DB", label: "record", title: "Record the chunk",
+        text: "The writer marks the chunk as stored and ok in the catalog. The session waits for its ok.",
+        layers: inside([["job", "catalog_writer.record_chunk(" + hash + ")"]]), where: "server/src/handlers/upload.rs:174" },
+      { route: ["writer", "db"], kind: "DB", label: "INSERT", title: "Chunk row saved",
+        text: "One small write on the only write connection.",
+        layers: inside([["table", "chunks"], ["status", "ok"]]), where: "server/src/catalog/writer.rs:443" },
+      { route: WIRE_OUT, kind: "Chunk", label: "ChunkOk", title: "ChunkOk #" + index,
+        text: "The reply tells the CLI that this chunk is safe on disk.",
+        layers: frame("ChunkOk", "0x0204", requestId, [["chunk_index", String(index)], ["chunk_sha256", hash]]),
+        where: "server/src/session.rs:219" }
+    ];
+  }
+
+  function closeNormal(text) {
+    return { route: WIRE_IN, kind: "Close", label: "Close", title: "Close",
+      text: text, layers: frame("Close", "0x00F0", 0, [["reason", "0 NORMAL"], ["message", "(empty)"]]),
+      where: "server/src/session.rs:237", effect: { state: "Closed", slots: 0 } };
+  }
+
+  var scenarios = {
+    upload: function () {
+      return [].concat(connect(true), offer(), [
+        { route: ["writer", "db"], kind: "DB", label: "SQL", title: "Which chunks are missing?",
+          text: "The writer looks up both chunk hashes. Neither is stored, so it opens upload 77 and lists both indexes.",
+          layers: inside([["found", "0 of 2 chunks stored"], ["new upload", "77 (example)"]]), where: "server/src/catalog/writer.rs:465" },
+        { route: ["writer", "session"], kind: "DB", label: "id 77", title: "Writer replies",
+          text: "The result comes back on a one-shot channel.",
+          layers: inside([["upload_id", "77"], ["missing_indexes", "[0, 1]"]]), where: "server/src/catalog/writer.rs:137" },
+        { route: WIRE_OUT, kind: "Offer", label: "NeedChunks", title: "NeedChunks",
+          text: "The server asks for chunks 0 and 1.",
+          layers: frame("NeedChunks", "0x0202", 2, [["upload_id", "77"], ["existing_version_id", "0"], ["missing_indexes", "[0, 1]"]]),
+          where: "server/src/handlers/upload.rs:106" }
+      ], chunk(0, 3, "1048576 bytes", HASH_0), chunk(1, 4, "419430 bytes (last chunk)", HASH_1), [
+        { route: WIRE_IN, kind: "Commit", label: "Commit", title: "Commit",
+          text: "All chunks are sent. The CLI asks the server to make the file visible. Its timeout grows with the file size.",
+          layers: frame("Commit", "0x0205", 5, [["upload_id", "77"]]), where: "cli/src/upload.rs:211" },
+        { route: ["session", "pool"], kind: "Job", label: "re-hash", title: "Check the whole file",
+          text: "Before anything becomes visible, the pool reads every chunk in order and hashes the whole file again.",
+          layers: inside([["job", "check_chunks_for_commit(…)"]]), where: "server/src/handlers/upload.rs:265" },
+        { route: ["pool", "disk"], kind: "Disk", label: "read", title: "Read chunks 0 and 1",
+          text: "One chunk in memory at a time. The total must hash to file_sha256 " + HASH_FILE + ".",
+          layers: inside([["read", "2 chunk files"], ["result", "file hash matches"]]), where: "server/src/handlers/upload.rs:329" },
+        { route: ["pool", "session"], kind: "Job", label: "ready", title: "File checks out",
+          text: "Every chunk is there and intact.",
+          layers: inside([["result", "CommitCheck::Ready"]]), where: "server/src/handlers/upload.rs:275" },
+        { route: ["session", "writer"], kind: "DB", label: "commit", title: "Commit in the catalog",
+          text: "The writer makes the new version in one SQLite transaction. All or nothing.",
+          layers: inside([["job", "catalog_writer.commit_upload(device 3, 77)"]]), where: "server/src/handlers/upload.rs:303" },
+        { route: ["writer", "db"], kind: "DB", label: "COMMIT", title: "One transaction",
+          text: "Version 412 is created, and upload 77 is removed.",
+          layers: inside([["new version", "412 (example)"], ["path", "photo.jpg"]]), where: "server/src/catalog/writer.rs:672" },
+        { route: ["writer", "session"], kind: "DB", label: "v412", title: "Writer replies",
+          text: "The version id comes back to the session.",
+          layers: inside([["version_id", "412"]]), where: "server/src/catalog/writer.rs:272" },
+        { route: WIRE_OUT, kind: "Commit", label: "CommitOk", title: "CommitOk",
+          text: "The photo is backed up. The CLI prints \"uploaded\".",
+          layers: frame("CommitOk", "0x0206", 5, [["version_id", "412"]]), where: "server/src/handlers/upload.rs:306" },
+        closeNormal("The CLI says goodbye. The session ends quietly and frees its slot.")
+      ]);
+    },
+    again: function () {
+      return [].concat(connect(true), offer(), [
+        { route: ["writer", "db"], kind: "DB", label: "SQL", title: "Same file already there?",
+          text: "Same path, size, modified time and file hash as version 412, and all its chunks are healthy. So no upload is needed.",
+          layers: inside([["match", "version 412 (example)"], ["new upload", "none"]]), where: "server/src/catalog/writer.rs:518" },
+        { route: ["writer", "session"], kind: "DB", label: "v412", title: "Writer replies",
+          text: "upload_id 0 means \"nothing to send\".",
+          layers: inside([["upload_id", "0"], ["existing_version_id", "412"]]), where: "server/src/catalog/writer.rs:137" },
+        { route: WIRE_OUT, kind: "Offer", label: "NeedChunks", title: "NeedChunks: nothing needed",
+          text: "No chunks are asked for. Not a single file byte crossed the network.",
+          layers: frame("NeedChunks", "0x0202", 2, [["upload_id", "0"], ["existing_version_id", "412"], ["missing_indexes", "[]"]]),
+          where: "cli/src/upload.rs:190" },
+        closeNormal("The CLI prints \"already backed up\" and closes.")
+      ]);
+    },
+    unpaired: function () {
+      return [].concat(connect(false), [
+        { route: WIRE_IN, kind: "Offer", label: "FileOffer", title: "FileOffer from an unpaired laptop",
+          text: "The laptop tries to upload anyway.",
+          layers: frame("FileOffer", "0x0201", 2, [["path", "photo.jpg"], ["size_bytes", "1468006"], ["…", "same as a normal offer"]]),
+          where: "server/src/session.rs:260" },
+        { route: WIRE_OUT, kind: "Error", label: "NOT_PAIRED", title: "Error NOT_PAIRED, then the end",
+          text: "check_incoming refuses FileOffer in the Unpaired state. This error is fatal: the server sends it and ends the connection. Nothing touched the disk or the catalog.",
+          layers: frame("Error", "0x00FF", 2, [["code", "4 NOT_PAIRED"], ["message", "FileOffer is not allowed now (Unpaired)"]]),
+          where: "server/src/session.rs:261", effect: { state: "Closed", slots: 0 } }
+      ]);
+    }
+  };
+
+  /* ---------- draw the map ---------- */
+  var svgNS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) {
+    var element = document.createElementNS(svgNS, tag);
+    for (var key in attrs) element.setAttribute(key, attrs[key]);
+    if (parent) parent.appendChild(element);
+    return element;
+  }
+  var linksGroup = document.getElementById("links");
+  links.forEach(function (link) {
+    var from = nodes[link[0]], to = nodes[link[1]];
+    el("line", { x1: from.x, y1: from.y, x2: to.x, y2: to.y, "class": "link" + (link[2] ? " thin" : "") }, linksGroup);
+  });
+  var nodesGroup = document.getElementById("nodes");
+  var nodeElements = {};
+  var stateBadge = null, slotBadge = null;
+  Object.keys(nodes).forEach(function (id) {
+    var node = nodes[id];
+    var group = el("g", { "class": "node" + (node.idle ? " idle" : ""), transform: "translate(" + node.x + "," + node.y + ")", tabindex: "0", role: "button", "aria-label": node.name }, nodesGroup);
+    if (node.shape === "cylinder") {
+      el("path", { "class": "body", d: "M-58,-22 v44 a58,10 0 0 0 116,0 v-44 a58,10 0 0 0 -116,0 a58,10 0 0 0 116,0" }, group);
+    } else if (node.shape === "laptop") {
+      el("rect", { "class": "body", x: -50, y: -34, width: 100, height: 56, rx: 5 }, group);
+      el("path", { d: "M-62,24 h124 l-8,10 h-108 z", fill: "var(--wire)" }, group);
+    } else if (node.shape === "router") {
+      el("rect", { "class": "body", x: -56, y: -24, width: 112, height: 48, rx: 8 }, group);
+      el("path", { d: "M-30,-24 l-8,-16 M30,-24 l8,-16", stroke: "var(--wire)", "stroke-width": 2 }, group);
+    } else {
+      el("rect", { "class": "body", x: -66, y: -26, width: 132, height: 52, rx: 8 }, group);
+    }
+    var name = el("text", { "class": "name", x: 0, y: -2, "text-anchor": "middle" }, group); name.textContent = node.name;
+    var sub = el("text", { "class": "sub", x: 0, y: 14, "text-anchor": "middle" }, group); sub.textContent = node.sub;
+    group.addEventListener("click", function () { pickNode(id); });
+    group.addEventListener("keydown", function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickNode(id); } });
+    nodeElements[id] = group;
+  });
+  function makeBadge(x, y) {
+    var group = el("g", { "class": "badge", transform: "translate(" + x + "," + y + ")" }, nodesGroup);
+    var rect = el("rect", { x: -60, y: -10, width: 120, height: 20, rx: 10 }, group);
+    var text = el("text", { x: 0, y: 4, "text-anchor": "middle" }, group);
+    return { set: function (value) { text.textContent = value; rect.setAttribute("width", Math.max(70, value.length * 7 + 16)); rect.setAttribute("x", -Math.max(70, value.length * 7 + 16) / 2); } };
+  }
+  stateBadge = makeBadge(nodes.session.x, nodes.session.y + 44);
+  slotBadge = makeBadge(nodes.listener.x, nodes.listener.y + 44);
+
+  var legend = document.getElementById("legend");
+  Object.keys(kinds).forEach(function (key) {
+    var item = document.createElement("span");
+    item.innerHTML = "<span class='swatch'></span>";
+    item.firstChild.style.setProperty("--sw", "var(" + kinds[key].color + ")");
+    item.appendChild(document.createTextNode(kinds[key].text));
+    legend.appendChild(item);
+  });
+
+  /* ---------- simulation state ---------- */
+  var events = [];
+  var done = 0;            // events that have arrived
+  var playing = false, animation = null, pickedRow = null;
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var packet = document.getElementById("packet");
+  var packetBody = document.getElementById("packet-body");
+  var packetLabel = document.getElementById("packet-label");
+  var eventsBody = document.getElementById("events");
+  var playButton = document.getElementById("play");
+
+  function loadScenario() {
+    stopPlaying(); cancelAnimation();
+    events = scenarios[document.getElementById("scenario").value]();
+    done = 0;
+    redraw();
+    showIntro();
+  }
+
+  function stateAfter(count) {
+    var state = { state: "no session", slots: 0 };
+    for (var i = 0; i < count; i++) {
+      var effect = events[i].effect;
+      if (!effect) continue;
+      if (effect.state) state.state = effect.state;
+      if (effect.slots !== undefined) state.slots = effect.slots;
+    }
+    return state;
+  }
+
+  function redraw() {
+    var state = stateAfter(done);
+    stateBadge.set("state: " + state.state);
+    slotBadge.set("slots used: " + state.slots + " / 64");
+    document.getElementById("counter").textContent = done + " / " + events.length;
+    eventsBody.textContent = "";
+    for (var i = 0; i < done; i++) eventsBody.appendChild(eventRow(i));
+    document.getElementById("events-empty").hidden = done > 0;
+    var box = document.getElementById("events-box");
+    box.scrollTop = box.scrollHeight;
+    Object.keys(nodeElements).forEach(function (id) { nodeElements[id].classList.remove("hot"); });
+    if (done > 0) {
+      var last = events[done - 1];
+      nodeElements[last.route[last.route.length - 1]].classList.add("hot");
+    }
+  }
+
+  function eventRow(index) {
+    var event = events[index];
+    var row = document.createElement("tr");
+    row.className = "row" + (pickedRow === index ? " picked" : "");
+    row.tabIndex = 0;
+    var cells = [String(index + 1), nodes[event.route[event.route.length - 2]].name, nodes[event.route[event.route.length - 1]].name];
+    cells.forEach(function (value, cellIndex) {
+      var cell = document.createElement("td");
+      if (cellIndex === 0) cell.className = "num";
+      cell.textContent = value; row.appendChild(cell);
+    });
+    var typeCell = document.createElement("td");
+    var swatch = document.createElement("span"); swatch.className = "swatch";
+    swatch.style.setProperty("--sw", "var(" + kinds[event.kind].color + ")");
+    typeCell.appendChild(swatch); typeCell.appendChild(document.createTextNode(event.label));
+    row.appendChild(typeCell);
+    row.addEventListener("click", function () { pickEvent(index); });
+    row.addEventListener("keydown", function (keyEvent) { if (keyEvent.key === "Enter" || keyEvent.key === " ") { keyEvent.preventDefault(); pickEvent(index); } });
+    return row;
+  }
+
+  /* ---------- inspector ---------- */
+  var inspector = document.getElementById("inspector");
+  function clearPicks() {
+    Object.keys(nodeElements).forEach(function (id) { nodeElements[id].classList.remove("picked"); });
+  }
+  function showIntro() {
+    pickedRow = null; clearPicks();
+    document.getElementById("inspector-kind").textContent = "start";
+    var names = { upload: "A paired laptop uploads a new 1.4 MiB photo (2 chunks).", again: "The same photo is offered again. Watch how nothing is sent.", unpaired: "A laptop without a device certificate tries to upload." };
+    inspector.innerHTML = "<span class='kicker'>Scenario</span><h3></h3><p class='route'>Press <b>Play</b> to run it, or <b>Step</b> to move one event at a time. Click any device on the map to see what it is.</p><p class='example-note'>Envelopes that cross the router are real network frames. Amber, orange and brown ones never leave the server: they are jobs passed between threads.</p>";
+    inspector.querySelector("h3").textContent = names[document.getElementById("scenario").value];
+  }
+  function pickEvent(index) {
+    pickedRow = index; clearPicks();
+    Array.prototype.forEach.call(eventsBody.children, function (row, rowIndex) { row.classList.toggle("picked", rowIndex === index); });
+    var event = events[index];
+    var kind = kinds[event.kind];
+    document.getElementById("inspector-kind").textContent = "event " + (index + 1);
+    inspector.textContent = "";
+    var kicker = document.createElement("span"); kicker.className = "kicker";
+    kicker.textContent = "Event " + (index + 1) + " of " + events.length;
+    var title = document.createElement("h3");
+    var pill = document.createElement("span"); pill.className = "type-pill"; pill.textContent = event.label;
+    pill.style.setProperty("--sw", "var(" + kind.color + ")");
+    title.appendChild(pill); title.appendChild(document.createTextNode(event.title));
+    var route = document.createElement("p"); route.className = "route";
+    route.textContent = event.route.map(function (id) { return nodes[id].name; }).join(" → ");
+    var text = document.createElement("p"); text.textContent = event.text;
+    var layersBox = document.createElement("div"); layersBox.className = "layers";
+    event.layers.forEach(function (layer) {
+      var box = document.createElement("div"); box.className = "layer";
+      var name = document.createElement("div"); name.className = "layer-name"; name.textContent = layer.name;
+      var list = document.createElement("dl");
+      layer.fields.forEach(function (field) {
+        var term = document.createElement("dt"); term.textContent = field[0];
+        var value = document.createElement("dd"); value.textContent = field[1];
+        list.appendChild(term); list.appendChild(value);
+      });
+      box.appendChild(name); box.appendChild(list); layersBox.appendChild(box);
+    });
+    var where = document.createElement("span"); where.className = "where"; where.textContent = "Code: " + event.where;
+    [kicker, title, route, text, layersBox, where].forEach(function (part) { inspector.appendChild(part); });
+  }
+  function pickNode(id) {
+    pickedRow = null; clearPicks();
+    Array.prototype.forEach.call(eventsBody.children, function (row) { row.classList.remove("picked"); });
+    nodeElements[id].classList.add("picked");
+    var node = nodes[id];
+    document.getElementById("inspector-kind").textContent = "device";
+    inspector.textContent = "";
+    var kicker = document.createElement("span"); kicker.className = "kicker"; kicker.textContent = "Device";
+    var title = document.createElement("h3"); title.textContent = node.name;
+    var box = document.createElement("div"); box.className = "layer";
+    var list = document.createElement("dl");
+    [["what it is", node.who], ["wakes on", node.wakes], ["job", node.job]].forEach(function (field) {
+      var term = document.createElement("dt"); term.textContent = field[0];
+      var value = document.createElement("dd"); value.style.fontFamily = "var(--font-body)"; value.textContent = field[1];
+      list.appendChild(term); list.appendChild(value);
+    });
+    box.appendChild(list);
+    var where = document.createElement("span"); where.className = "where"; where.textContent = "Code: " + node.where;
+    [kicker, title, box, where].forEach(function (part) { inspector.appendChild(part); });
+  }
+
+  /* ---------- animation ---------- */
+  function cancelAnimation() {
+    if (animation) { cancelAnimationFrame(animation); animation = null; }
+    packet.style.display = "none";
+  }
+  function animateNext(onArrive) {
+    if (done >= events.length) { stopPlaying(); return; }
+    var event = events[done];
+    var points = event.route.map(function (id) { return nodes[id]; });
+    var lengths = [], total = 0;
+    for (var i = 1; i < points.length; i++) {
+      var length = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      lengths.push(length); total += length;
+    }
+    packetBody.setAttribute("fill", "var(" + kinds[event.kind].color + ")");
+    packetLabel.textContent = event.label;
+    packetLabel.setAttribute("fill", "var(" + kinds[event.kind].color + ")");
+    packet.style.display = "";
+    var duration = reduceMotion ? 0 : Number(document.getElementById("speed").value) * (event.route.length > 2 ? 1.4 : 1);
+    var start = null;
+    function place(progress) {
+      var distance = progress * total, segment = 0;
+      while (segment < lengths.length - 1 && distance > lengths[segment]) { distance -= lengths[segment]; segment++; }
+      var ratio = lengths[segment] ? Math.min(1, distance / lengths[segment]) : 1;
+      var from = points[segment], to = points[segment + 1];
+      packet.setAttribute("transform", "translate(" + (from.x + (to.x - from.x) * ratio) + "," + (from.y + (to.y - from.y) * ratio - 34) + ")");
+    }
+    function frameStep(time) {
+      if (start === null) start = time;
+      var progress = duration ? Math.min(1, (time - start) / duration) : 1;
+      var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+      place(eased);
+      if (progress < 1) { animation = requestAnimationFrame(frameStep); return; }
+      animation = null;
+      packet.style.display = "none";
+      done++;
+      redraw();
+      pickEvent(done - 1);
+      if (onArrive) onArrive();
+    }
+    animation = requestAnimationFrame(frameStep);
+  }
+
+  function startPlaying() {
+    if (done >= events.length) { done = 0; redraw(); }
+    playing = true; playButton.textContent = "❚❚ Pause";
+    (function loop() {
+      if (!playing) return;
+      animateNext(function () {
+        if (!playing) return;
+        if (done >= events.length) { stopPlaying(); return; }
+        setTimeout(loop, reduceMotion ? 600 : 250);
+      });
+    })();
+  }
+  function stopPlaying() { playing = false; playButton.textContent = "▶ Play"; }
+
+  playButton.addEventListener("click", function () {
+    if (playing) { stopPlaying(); return; }
+    if (animation) return;
+    startPlaying();
+  });
+  document.getElementById("step").addEventListener("click", function () {
+    stopPlaying();
+    if (animation) return;
+    animateNext(null);
+  });
+  document.getElementById("back").addEventListener("click", function () {
+    stopPlaying(); cancelAnimation();
+    done = Math.max(0, done - 1);
+    redraw();
+    if (done > 0) pickEvent(done - 1); else showIntro();
+  });
+  document.getElementById("reset").addEventListener("click", loadScenario);
+  document.getElementById("scenario").addEventListener("change", loadScenario);
+
+  loadScenario();
+})();
+</script>

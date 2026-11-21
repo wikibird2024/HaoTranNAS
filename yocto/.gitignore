@@ -1,0 +1,6 @@
+# Downloaded by kas, not our source.
+/bitbake/
+/openembedded-core/
+/meta-raspberrypi/
+# Build output (many GB).
+/build/

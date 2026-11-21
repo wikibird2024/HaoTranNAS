@@ -1,0 +1,32 @@
+# HaoTranNAS image for the Raspberry Pi 5 (D-044, D-045).
+# Same shape as Bootlin yocto-kiss (kas/kiss.yaml): this file says which
+# layers to download, which board, which distro and which image to build.
+header:
+  version: 11
+
+machine: raspberrypi5
+distro: haotrannas
+target: haotrannas-image
+
+repos:
+  # No url: the layer lives in this git repo (HaoTranNAS).
+  haotrannas:
+    layers:
+      yocto/meta-haotrannas:
+
+  bitbake:
+    url: "https://git.openembedded.org/bitbake"
+    branch: "2.18"
+    layers:
+      .: disabled
+
+  openembedded-core:
+    url: "https://git.openembedded.org/openembedded-core"
+    branch: wrynose
+    layers:
+      meta:
+
+  # Board support: machine raspberrypi5, kernel, boot firmware.
+  meta-raspberrypi:
+    url: "https://git.yoctoproject.org/meta-raspberrypi"
+    branch: wrynose
