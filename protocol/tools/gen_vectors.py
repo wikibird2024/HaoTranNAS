@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate protocol/vectors/*.json from protocol/spec.md (version 1).
+"""Generate protocol/vectors/*.json from protocol/spec.md (version 2).
 
 This is a third, independent encoder of the spec. Rust (core/) and Dart
 (mobile/lib/protocol/) must both decode every valid vector to exactly its
@@ -17,7 +17,7 @@ from pathlib import Path
 
 VECTORS_DIR = Path(__file__).resolve().parent.parent / "vectors"
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 CHUNK_SIZE_BYTES = 1_048_576
 MAX_FRAME_LENGTH_BYTES = 4_194_304
 MAX_NAME_BYTES = 64
@@ -72,6 +72,11 @@ MESSAGES = {
                               ("chunk_hashes", ("list", "hash"))]),
     "ReadChunk": (0x0403, [("chunk_sha256", "hash")]),
     "ChunkContent": (0x0404, [("chunk_sha256", "hash"), ("data", "bytes")]),
+    "PutThumbnail": (0x0501, [("file_sha256", "hash"), ("jpeg_data", "bytes")]),
+    "ThumbnailOk": (0x0502, []),
+    "ReadThumbnail": (0x0503, [("device_id", "u64"), ("path", PATH),
+                               ("version_id", "u64")]),
+    "Thumbnail": (0x0504, [("jpeg_data", "bytes")]),
     "Close": (0x00F0, [("reason", "u16"), ("message", TEXT)]),
     "Error": (0x00FF, [("code", "u16"), ("message", TEXT)]),
 }
@@ -157,6 +162,9 @@ def valid_vectors():
     big_hashes = chunk_hashes(big_file)
     server_fingerprint = sha256_hex(b"example server certificate")
     long_name = "n" * MAX_NAME_BYTES
+    # Not a real picture: the codec carries bytes, the server checks only
+    # the JPEG start marker FF D8 FF (spec section 16).
+    tiny_jpeg = bytes.fromhex("ffd8ffe0") + b"thumb" + bytes.fromhex("ffd9")
     long_path = "/".join(["a" * 255, "b" * 255, "c" * 255, "d" * 254, "e"])
     assert len(long_path.encode()) == MAX_PATH_BYTES
 
@@ -172,6 +180,9 @@ def valid_vectors():
           "device_name": "\ufeff"}),
         ("hello_name_at_max_length", "Hello", 1,
          {"protocol_version": 1, "client_software": "", "device_name": long_name}),
+        ("hello_version_two", "Hello", 1,
+         {"protocol_version": 2, "client_software": "haotrannas-mobile/0.2.0",
+          "device_name": "pixel-7"}),
         ("hello_ok_unpaired", "HelloOk", 1,
          {"protocol_version": 1, "server_software": "haotrannas-server/0.1.0",
           "server_name": "home-nas", "device_id": "0",
@@ -247,6 +258,14 @@ def valid_vectors():
         ("read_chunk", "ReadChunk", 17, {"chunk_sha256": hello_hash}),
         ("chunk_content", "ChunkContent", 17,
          {"chunk_sha256": hello_hash, "data": b"hello".hex()}),
+        ("put_thumbnail", "PutThumbnail", 19,
+         {"file_sha256": sha256_hex(big_file), "jpeg_data": tiny_jpeg.hex()}),
+        ("thumbnail_ok", "ThumbnailOk", 19, {}),
+        ("read_thumbnail_latest", "ReadThumbnail", 21,
+         {"device_id": "0", "path": "DCIM/Camera/IMG_0001.jpg", "version_id": "0"}),
+        ("read_thumbnail_other_device", "ReadThumbnail", 21,
+         {"device_id": "8", "path": "Ảnh/📷 bãi biển.jpg", "version_id": "42"}),
+        ("thumbnail", "Thumbnail", 21, {"jpeg_data": tiny_jpeg.hex()}),
         ("close_normal", "Close", 0, {"reason": 0, "message": ""}),
         ("close_paired_reconnect", "Close", 0,
          {"reason": 5, "message": "paired, reconnect with your certificate"}),
@@ -312,6 +331,10 @@ def invalid_vectors():
          "list count larger than the bytes left"),
         ("read_chunk_short_hash", frame(0x0403, ["00" * 31]), "payload",
          "hash needs 32 bytes"),
+        ("thumbnail_bytes_length_past_end", frame(0x0504, ["00010000", "ffd8ff"]),
+         "payload", "bytes length 65 536 but only 3 bytes left"),
+        ("thumbnail_ok_trailing_byte", frame(0x0502, ["00"]), "payload",
+         "ThumbnailOk has an empty payload"),
         ("close_trailing_bytes", frame(0x00F0, ["0000", text(b""), "0000"]), "payload",
          "bytes left after the last field"),
     ]

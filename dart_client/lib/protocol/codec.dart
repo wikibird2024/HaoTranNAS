@@ -99,7 +99,7 @@ Uint8List encodePayload(Message message) {
         ..writeU64(message.deviceId, 'device_id')
         ..writeU32(message.chunkSizeBytes, 'chunk_size_bytes')
         ..writeU32(message.maxFrameLengthBytes, 'max_frame_length_bytes');
-    case Ping() || Pong() || ListDevices():
+    case Ping() || Pong() || ListDevices() || ThumbnailOk():
       break;
     case PairRequest():
       writer.writeString(message.code, 'code', maxBytes: maxNameBytes);
@@ -182,6 +182,17 @@ Uint8List encodePayload(Message message) {
       writer
         ..writeHash(message.chunkSha256, 'chunk_sha256')
         ..writeBytes(message.data, 'data');
+    case PutThumbnail():
+      writer
+        ..writeHash(message.fileSha256, 'file_sha256')
+        ..writeBytes(message.jpegData, 'jpeg_data');
+    case ReadThumbnail():
+      writer
+        ..writeU64(message.deviceId, 'device_id')
+        ..writeString(message.path, 'path', maxBytes: maxPathBytes)
+        ..writeU64(message.versionId, 'version_id');
+    case Thumbnail():
+      writer.writeBytes(message.jpegData, 'jpeg_data');
     case Close():
       writer
         ..writeU16(message.reason, 'reason')
@@ -349,6 +360,21 @@ Message? _decodeFields(int messageType, WireReader reader) {
         chunkSha256: reader.readHash('chunk_sha256'),
         data: reader.readBytes('data'),
       );
+    case MessageType.putThumbnail:
+      return PutThumbnail(
+        fileSha256: reader.readHash('file_sha256'),
+        jpegData: reader.readBytes('jpeg_data'),
+      );
+    case MessageType.thumbnailOk:
+      return const ThumbnailOk();
+    case MessageType.readThumbnail:
+      return ReadThumbnail(
+        deviceId: reader.readU64('device_id'),
+        path: reader.readString('path', maxBytes: maxPathBytes),
+        versionId: reader.readU64('version_id'),
+      );
+    case MessageType.thumbnail:
+      return Thumbnail(jpegData: reader.readBytes('jpeg_data'));
     case MessageType.close:
       return Close(
         reason: reader.readU16('reason'),

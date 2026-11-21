@@ -18,7 +18,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use haotrannas_core::fingerprint::CertFingerprint;
-use haotrannas_core::limits::PROTOCOL_VERSION;
+use haotrannas_core::limits::MIN_PROTOCOL_VERSION;
 use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 
 use crate::config::ServerConfig;
@@ -71,10 +71,11 @@ fn announced_addresses(listen_ip: IpAddr) -> Result<AnnouncedAddresses, MdnsErro
     }
 }
 
-/// The TXT records: `v=<protocol version>`, `fp=<fingerprint prefix>`.
+/// The TXT records: `v=<lowest protocol version accepted>` (old apps look
+/// for `v=1`, D-048), `fp=<fingerprint prefix>`.
 pub fn txt_records(server_fingerprint: &CertFingerprint) -> [(&'static str, String); 2] {
     [
-        (VERSION_TXT_KEY, PROTOCOL_VERSION.to_string()),
+        (VERSION_TXT_KEY, MIN_PROTOCOL_VERSION.to_string()),
         (FINGERPRINT_TXT_KEY, server_fingerprint.mdns_prefix()),
     ]
 }

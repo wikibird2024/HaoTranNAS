@@ -9,8 +9,8 @@ import 'package:haotrannas_client/protocol/messages.dart';
 
 import 'vector_files.dart';
 
-const expectedValidCount = 38;
-const expectedInvalidCount = 18;
+const expectedValidCount = 44;
+const expectedInvalidCount = 20;
 
 void main() {
   final vectorFile = loadVectorFile('messages.json');

@@ -12,8 +12,8 @@ use haotrannas_core::message::{DeviceEntry, DirEntry, DirEntryKind, Message};
 use haotrannas_core::path_rules::validate_path;
 use serde_json::Value;
 
-const EXPECTED_VALID_COUNT: usize = 38;
-const EXPECTED_INVALID_COUNT: usize = 18;
+const EXPECTED_VALID_COUNT: usize = 44;
+const EXPECTED_INVALID_COUNT: usize = 20;
 const EXPECTED_PATH_COUNT: usize = 20;
 const EXPECTED_CHUNKING_FILE_COUNT: usize = 6;
 
@@ -220,6 +220,19 @@ fn message_from_json(message_name: &str, fields: &Value) -> Message {
         "ChunkContent" => Message::ChunkContent {
             chunk_sha256: json_chunk_hash(fields, "chunk_sha256"),
             data: json_bytes(fields, "data"),
+        },
+        "PutThumbnail" => Message::PutThumbnail {
+            file_sha256: json_hash(fields, "file_sha256"),
+            jpeg_data: json_bytes(fields, "jpeg_data"),
+        },
+        "ThumbnailOk" => Message::ThumbnailOk,
+        "ReadThumbnail" => Message::ReadThumbnail {
+            device_id: json_u64(fields, "device_id"),
+            path: json_string(fields, "path"),
+            version_id: json_u64(fields, "version_id"),
+        },
+        "Thumbnail" => Message::Thumbnail {
+            jpeg_data: json_bytes(fields, "jpeg_data"),
         },
         "Close" => Message::Close {
             reason: json_u16(fields, "reason"),

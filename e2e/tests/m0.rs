@@ -143,13 +143,42 @@ fn unknown_message_type_gets_malformed_frame_with_its_id() {
 }
 
 #[test]
-fn hello_with_version_2_gets_version_mismatch() {
+fn hello_with_version_3_gets_version_mismatch() {
     let server = DevServer::start().unwrap();
     let mut client = RawClient::connect(server.address()).unwrap();
-    client.send(&hello(2), 1).unwrap();
+    client.send(&hello(3), 1).unwrap();
     let (request_id, reply) = client.expect_frame().unwrap();
     assert_eq!(request_id, 1);
     assert_error(&reply, ErrorCode::VersionMismatch);
+    client.expect_end().unwrap();
+}
+
+#[test]
+fn version_1_client_works_but_cannot_ask_for_thumbnails() {
+    let server = DevServer::start().unwrap();
+    let mut client = RawClient::connect(server.address()).unwrap();
+    client.send(&hello(1), 1).unwrap();
+    let (_, reply) = client.expect_frame().unwrap();
+    assert!(
+        matches!(
+            reply,
+            Message::HelloOk {
+                protocol_version: 1,
+                ..
+            }
+        ),
+        "{reply:?}"
+    );
+    client.send(&Message::Ping, 2).unwrap();
+    assert_eq!(client.expect_frame().unwrap(), (2, Message::Pong));
+    let read_thumbnail = Message::ReadThumbnail {
+        device_id: 0,
+        path: "a.jpg".to_owned(),
+        version_id: 0,
+    };
+    client.send(&read_thumbnail, 3).unwrap();
+    let (_, reply) = client.expect_frame().unwrap();
+    assert_error(&reply, ErrorCode::UnexpectedMessage);
     client.expect_end().unwrap();
 }
 

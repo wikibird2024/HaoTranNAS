@@ -35,7 +35,8 @@ DiscoveredServer? serverFromBonjour({
   required Map<String, String> attributes,
   String? pinnedFingerprintPrefix,
 }) {
-  if (attributes['v'] != '$supportedProtocolVersion') return null;
+  final version = usableAnnouncedVersion(attributes['v']);
+  if (version == null) return null;
   final fingerprintPrefix = attributes['fp']?.toLowerCase();
   if (fingerprintPrefix == null ||
       !_fingerprintPrefixPattern.hasMatch(fingerprintPrefix)) {
@@ -56,7 +57,7 @@ DiscoveredServer? serverFromBonjour({
     ipv4Address: ipv4Address,
     port: port,
     fingerprintPrefix: fingerprintPrefix,
-    protocolVersion: supportedProtocolVersion,
+    protocolVersion: version,
   );
 }
 

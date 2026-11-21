@@ -112,7 +112,7 @@ fn write_payload(writer: &mut Writer, message: &Message) -> Result<(), EncodeErr
             writer.write_u32(*chunk_size_bytes);
             writer.write_u32(*max_frame_length_bytes);
         }
-        Message::Ping | Message::Pong | Message::ListDevices => {}
+        Message::Ping | Message::Pong | Message::ListDevices | Message::ThumbnailOk => {}
         Message::PairRequest { code } => writer.write_string(code, MAX_NAME_BYTES)?,
         Message::PairOk {
             device_id,
@@ -205,6 +205,11 @@ fn write_payload(writer: &mut Writer, message: &Message) -> Result<(), EncodeErr
             device_id,
             path,
             version_id,
+        }
+        | Message::ReadThumbnail {
+            device_id,
+            path,
+            version_id,
         } => {
             writer.write_u64(*device_id)?;
             writer.write_string(path, MAX_PATH_BYTES)?;
@@ -228,6 +233,14 @@ fn write_payload(writer: &mut Writer, message: &Message) -> Result<(), EncodeErr
             writer.write_hash(&chunk_sha256.0);
             writer.write_bytes(data)?;
         }
+        Message::PutThumbnail {
+            file_sha256,
+            jpeg_data,
+        } => {
+            writer.write_hash(file_sha256);
+            writer.write_bytes(jpeg_data)?;
+        }
+        Message::Thumbnail { jpeg_data } => writer.write_bytes(jpeg_data)?,
         Message::Close { reason, message } => {
             writer.write_u16(*reason);
             writer.write_string(message, MAX_MESSAGE_BYTES)?;
@@ -367,6 +380,19 @@ fn read_payload(
         MessageType::ChunkContent => Message::ChunkContent {
             chunk_sha256: ChunkHash(reader.read_hash()?),
             data: reader.read_bytes()?,
+        },
+        MessageType::PutThumbnail => Message::PutThumbnail {
+            file_sha256: reader.read_hash()?,
+            jpeg_data: reader.read_bytes()?,
+        },
+        MessageType::ThumbnailOk => Message::ThumbnailOk,
+        MessageType::ReadThumbnail => Message::ReadThumbnail {
+            device_id: reader.read_u64()?,
+            path: reader.read_string(MAX_PATH_BYTES)?,
+            version_id: reader.read_u64()?,
+        },
+        MessageType::Thumbnail => Message::Thumbnail {
+            jpeg_data: reader.read_bytes()?,
         },
         MessageType::Close => Message::Close {
             reason: reader.read_u16()?,

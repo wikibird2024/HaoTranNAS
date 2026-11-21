@@ -56,6 +56,14 @@ pub enum MessageType {
     ReadChunk = 0x0403,
     /// S→C, one chunk's bytes.
     ChunkContent = 0x0404,
+    /// C→S, a thumbnail for a backed-up file (v2, spec §16).
+    PutThumbnail = 0x0501,
+    /// S→C, thumbnail stored (v2).
+    ThumbnailOk = 0x0502,
+    /// C→S, ask for a file's thumbnail (v2).
+    ReadThumbnail = 0x0503,
+    /// S→C, the thumbnail's JPEG bytes (v2).
+    Thumbnail = 0x0504,
     /// Either side, ends the connection; gets no reply.
     Close = 0x00F0,
     /// S→C, a request failed.
@@ -64,7 +72,7 @@ pub enum MessageType {
 
 impl MessageType {
     /// Every message type, in spec table order.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 26] = [
         Self::Hello,
         Self::HelloOk,
         Self::Ping,
@@ -85,6 +93,10 @@ impl MessageType {
         Self::FileManifest,
         Self::ReadChunk,
         Self::ChunkContent,
+        Self::PutThumbnail,
+        Self::ThumbnailOk,
+        Self::ReadThumbnail,
+        Self::Thumbnail,
         Self::Close,
         Self::Error,
     ];
@@ -137,6 +149,10 @@ impl MessageType {
             Self::FileManifest => "FileManifest",
             Self::ReadChunk => "ReadChunk",
             Self::ChunkContent => "ChunkContent",
+            Self::PutThumbnail => "PutThumbnail",
+            Self::ThumbnailOk => "ThumbnailOk",
+            Self::ReadThumbnail => "ReadThumbnail",
+            Self::Thumbnail => "Thumbnail",
             Self::Close => "Close",
             Self::Error => "Error",
         }
@@ -354,6 +370,29 @@ pub enum Message {
         /// The chunk's bytes.
         data: Vec<u8>,
     },
+    /// A thumbnail for a file the caller has backed up (v2).
+    PutThumbnail {
+        /// The backed-up file's SHA-256.
+        file_sha256: [u8; HASH_BYTES],
+        /// JPEG bytes, at most [`crate::limits::MAX_THUMBNAIL_BYTES`].
+        jpeg_data: Vec<u8>,
+    },
+    /// Thumbnail stored (v2).
+    ThumbnailOk,
+    /// Ask for a file's thumbnail (v2).
+    ReadThumbnail {
+        /// 0 = the caller.
+        device_id: u64,
+        /// Backup path.
+        path: String,
+        /// 0 = latest.
+        version_id: u64,
+    },
+    /// The thumbnail's JPEG bytes (v2).
+    Thumbnail {
+        /// JPEG bytes.
+        jpeg_data: Vec<u8>,
+    },
     /// Ends the connection; gets no reply.
     Close {
         /// Raw reason number, see [`crate::error_code::CloseReason`].
@@ -394,6 +433,10 @@ impl Message {
             Self::FileManifest { .. } => MessageType::FileManifest,
             Self::ReadChunk { .. } => MessageType::ReadChunk,
             Self::ChunkContent { .. } => MessageType::ChunkContent,
+            Self::PutThumbnail { .. } => MessageType::PutThumbnail,
+            Self::ThumbnailOk => MessageType::ThumbnailOk,
+            Self::ReadThumbnail { .. } => MessageType::ReadThumbnail,
+            Self::Thumbnail { .. } => MessageType::Thumbnail,
             Self::Close { .. } => MessageType::Close,
             Self::Error { .. } => MessageType::Error,
         }
@@ -554,6 +597,17 @@ impl fmt::Debug for Message {
             Self::ChunkContent { chunk_sha256, data } => {
                 debug_fields!(formatter, "ChunkContent", chunk_sha256, data)
             }
+            Self::PutThumbnail {
+                file_sha256,
+                jpeg_data,
+            } => debug_fields!(formatter, "PutThumbnail", file_sha256, jpeg_data),
+            Self::ThumbnailOk => formatter.write_str("ThumbnailOk"),
+            Self::ReadThumbnail {
+                device_id,
+                path,
+                version_id,
+            } => debug_fields!(formatter, "ReadThumbnail", device_id, path, version_id),
+            Self::Thumbnail { jpeg_data } => debug_fields!(formatter, "Thumbnail", jpeg_data),
             Self::Close { reason, message } => debug_fields!(formatter, "Close", reason, message),
             Self::Error { code, message } => debug_fields!(formatter, "Error", code, message),
         }
@@ -604,7 +658,7 @@ mod tests {
             .into_iter()
             .filter(|message_type| message_type.is_request())
             .collect();
-        assert_eq!(requests.len(), 10);
+        assert_eq!(requests.len(), 12);
         for request in requests {
             let reply = request.reply_type().unwrap();
             assert_eq!(reply.number(), request.number() + 1);

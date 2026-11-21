@@ -17,7 +17,7 @@ final deviceKeyDer = Uint8List.fromList(
 );
 
 const unpairedHelloOk = HelloOk(
-  protocolVersion: 1,
+  protocolVersion: 2,
   serverSoftware: 'haotrannas-server 0.1.0',
   serverName: 'nas',
   deviceId: 0,

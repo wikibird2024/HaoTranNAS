@@ -5,8 +5,12 @@
 /// (docs/conventions.md §4): never raise or remove one without asking Hao.
 library;
 
-/// Wire protocol version sent in `Hello`; a mismatch is refused.
-const int protocolVersion = 1;
+/// Wire protocol version this app speaks and sends in `Hello` (2 = v1 +
+/// thumbnails, spec §16); the server answers with the same number.
+const int protocolVersion = 2;
+
+/// Lowest version a server accepts; also the mDNS `v=` value (D-048).
+const int minProtocolVersion = 1;
 
 /// Frame header: lengthBytes u32 + type u16 + requestId u32.
 const int frameHeaderBytes = 10;
@@ -71,6 +75,12 @@ const int commitTimeoutBaseMs = 30000;
 /// Slowest re-hash speed a client allows for at `Commit`: the server
 /// re-reads every chunk, and a busy spinning disk can be this slow.
 const int commitMinHashBytesPerSecond = 20 * 1048576;
+
+/// Largest thumbnail the server stores, in bytes (spec §16).
+const int maxThumbnailBytes = 65536;
+
+/// Longest side a thumbnail should have, in pixels (spec §16).
+const int thumbnailMaxSidePx = 256;
 
 /// How long a client waits for `CommitOk` for a file of [sizeBytes]: the
 /// base plus the time to re-read the file at the slowest allowed speed.

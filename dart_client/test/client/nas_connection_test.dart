@@ -35,7 +35,7 @@ void main() {
         expect(
           hello.message,
           const Hello(
-            protocolVersion: 1,
+            protocolVersion: 2,
             clientSoftware: 'haotrannas-mobile test',
             deviceName: 'test phone',
           ),
@@ -74,7 +74,7 @@ void main() {
     test('HelloOk with another protocol version → versionMismatch', () async {
       final server = FakeServer()
         ..answer = (_) => const HelloOk(
-          protocolVersion: 2,
+          protocolVersion: 3,
           serverSoftware: 'future',
           serverName: 'nas',
           deviceId: 1,
@@ -536,7 +536,7 @@ void main() {
         final server = FakeServer()
           ..answer = (request) => switch (request) {
             Hello() => const HelloOk(
-              protocolVersion: 1,
+              protocolVersion: 2,
               serverSoftware: 'test',
               serverName: 'nas',
               deviceId: 0,

@@ -1,5 +1,5 @@
 {
- "protocol_version": 1,
+ "protocol_version": 2,
  "valid": [
   {
    "name": "hello_basic",
@@ -71,6 +71,24 @@
     "0001",
     "0000",
     "00406e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e"
+   ]
+  },
+  {
+   "name": "hello_version_two",
+   "message": "Hello",
+   "request_id": 1,
+   "fields": {
+    "protocol_version": 2,
+    "client_software": "haotrannas-mobile/0.2.0",
+    "device_name": "pixel-7"
+   },
+   "frame_hex": [
+    "0000002a",
+    "0001",
+    "00000001",
+    "0002",
+    "001768616f7472616e6e61732d6d6f62696c652f302e322e30",
+    "0007706978656c2d37"
    ]
   },
   {
@@ -660,6 +678,83 @@
    ]
   },
   {
+   "name": "put_thumbnail",
+   "message": "PutThumbnail",
+   "request_id": 19,
+   "fields": {
+    "file_sha256": "fe2aaf82bfa2ffec207a0c6fa7ce7d4af268d67e2672fdaec675f3f9b65d0854",
+    "jpeg_data": "ffd8ffe07468756d62ffd9"
+   },
+   "frame_hex": [
+    "00000035",
+    "0501",
+    "00000013",
+    "fe2aaf82bfa2ffec207a0c6fa7ce7d4af268d67e2672fdaec675f3f9b65d0854",
+    "0000000bffd8ffe07468756d62ffd9"
+   ]
+  },
+  {
+   "name": "thumbnail_ok",
+   "message": "ThumbnailOk",
+   "request_id": 19,
+   "fields": {},
+   "frame_hex": [
+    "00000006",
+    "0502",
+    "00000013"
+   ]
+  },
+  {
+   "name": "read_thumbnail_latest",
+   "message": "ReadThumbnail",
+   "request_id": 21,
+   "fields": {
+    "device_id": "0",
+    "path": "DCIM/Camera/IMG_0001.jpg",
+    "version_id": "0"
+   },
+   "frame_hex": [
+    "00000030",
+    "0503",
+    "00000015",
+    "0000000000000000",
+    "00184443494d2f43616d6572612f494d475f303030312e6a7067",
+    "0000000000000000"
+   ]
+  },
+  {
+   "name": "read_thumbnail_other_device",
+   "message": "ReadThumbnail",
+   "request_id": 21,
+   "fields": {
+    "device_id": "8",
+    "path": "Ảnh/📷 bãi biển.jpg",
+    "version_id": "42"
+   },
+   "frame_hex": [
+    "00000032",
+    "0503",
+    "00000015",
+    "0000000000000008",
+    "001ae1baa26e682ff09f93b72062c3a369206269e1bb836e2e6a7067",
+    "000000000000002a"
+   ]
+  },
+  {
+   "name": "thumbnail",
+   "message": "Thumbnail",
+   "request_id": 21,
+   "fields": {
+    "jpeg_data": "ffd8ffe07468756d62ffd9"
+   },
+   "frame_hex": [
+    "00000015",
+    "0504",
+    "00000015",
+    "0000000bffd8ffe07468756d62ffd9"
+   ]
+  },
+  {
    "name": "close_normal",
    "message": "Close",
    "request_id": 0,
@@ -937,6 +1032,31 @@
    "stage": "payload",
    "expect_error": "MALFORMED_FRAME",
    "why": "hash needs 32 bytes"
+  },
+  {
+   "name": "thumbnail_bytes_length_past_end",
+   "frame_hex": [
+    "0000000d",
+    "0504",
+    "00000001",
+    "00010000",
+    "ffd8ff"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "bytes length 65 536 but only 3 bytes left"
+  },
+  {
+   "name": "thumbnail_ok_trailing_byte",
+   "frame_hex": [
+    "00000007",
+    "0502",
+    "00000001",
+    "00"
+   ],
+   "stage": "payload",
+   "expect_error": "MALFORMED_FRAME",
+   "why": "ThumbnailOk has an empty payload"
   },
   {
    "name": "close_trailing_bytes",

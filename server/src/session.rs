@@ -27,8 +27,8 @@ use haotrannas_core::error_code::{CloseReason, ErrorCode};
 use haotrannas_core::frame::{FrameDecoder, RawFrame};
 use haotrannas_core::io::{FrameIoError, read_frame, write_frame};
 use haotrannas_core::limits::MAX_MESSAGE_BYTES;
-use haotrannas_core::message::Message;
-use haotrannas_core::session::SessionState;
+use haotrannas_core::message::{Message, MessageType};
+use haotrannas_core::session::{SessionState, first_protocol_version};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -94,6 +94,8 @@ struct Conversation {
     device_name: String,
     /// Wrong pairing codes on this connection.
     pair_failure_count: u32,
+    /// The version from `Hello` (spec §6); 0 before `Hello`.
+    protocol_version: u16,
 }
 
 /// Why a session ended (for logs and tests).
@@ -147,6 +149,7 @@ where
         state: SessionState::AwaitingHello,
         device_name: String::new(),
         pair_failure_count: 0,
+        protocol_version: 0,
     };
     let mut decoder = FrameDecoder::new();
 
@@ -255,13 +258,8 @@ async fn handle_frame(
         Ok(message) => message,
         Err(error) => return Step::Fatal(ErrorCode::MalformedFrame, error.to_string()),
     };
-    let message_type = message.message_type();
-    let state = conversation.state;
-    if let Err(code) = state.check_incoming(message_type) {
-        return Step::Fatal(
-            code,
-            format!("{} is not allowed now ({state:?})", message_type.name()),
-        );
+    if let Some(refusal) = refuse_now(message.message_type(), conversation) {
+        return refusal;
     }
     match message {
         Message::Hello {
@@ -272,6 +270,7 @@ async fn handle_frame(
             Ok((reply, next_state)) => {
                 conversation.state = next_state;
                 conversation.device_name = device_name;
+                conversation.protocol_version = protocol_version;
                 Step::Reply(reply)
             }
             Err((code, text)) => Step::Fatal(code, text),
@@ -352,6 +351,30 @@ async fn handle_frame(
             message: NOT_IMPLEMENTED_MESSAGE.to_owned(),
         }),
     }
+}
+
+/// The fatal step for a message not allowed now: wrong state (spec §6), or
+/// a version 2 request on a version 1 connection. `None` = handle it.
+fn refuse_now(message_type: MessageType, conversation: &Conversation) -> Option<Step> {
+    let state = conversation.state;
+    if let Err(code) = state.check_incoming(message_type) {
+        return Some(Step::Fatal(
+            code,
+            format!("{} is not allowed now ({state:?})", message_type.name()),
+        ));
+    }
+    let first_version = first_protocol_version(message_type);
+    if state == SessionState::Ready && conversation.protocol_version < first_version {
+        return Some(Step::Fatal(
+            ErrorCode::UnexpectedMessage,
+            format!(
+                "{} needs protocol version {first_version}, this connection speaks {}",
+                message_type.name(),
+                conversation.protocol_version
+            ),
+        ));
+    }
+    None
 }
 
 /// Passes a browse or download request (spec §9) to its handler. Its
@@ -605,7 +628,7 @@ mod tests {
         assert!(matches!(
             hello_ok,
             Message::HelloOk {
-                protocol_version: 1,
+                protocol_version: 2,
                 device_id: 1,
                 ..
             }
@@ -644,7 +667,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn other_version_gets_version_mismatch() {
         let mut client = TestClient::start(Some(1));
-        client.send(&hello_with_version(2), 1).await;
+        client.send(&hello_with_version(3), 1).await;
         let (_, reply) = client.receive().await.unwrap();
         assert!(
             matches!(reply, Message::Error { code, .. } if code == error(ErrorCode::VersionMismatch))

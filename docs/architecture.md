@@ -247,6 +247,7 @@ vectors in `protocol/vectors/`.
 | Upload | `Commit` | `CommitOk` | — |
 | Browse | `ListDevices`, `ListDir` (paged) | `DeviceList`, `DirEntries` | — (BEP sends full index) |
 | Download | `ReadFile`, then `ReadChunk` per chunk | `FileManifest`, `ChunkContent` | `Request` / `Response` |
+| Thumbnails (v2, D-048) | `PutThumbnail` after a backup, `ReadThumbnail` per photo in Files | `ThumbnailOk`, `Thumbnail` | — |
 | Keepalive | `Ping` | `Pong` | `Ping` |
 | End | `Close` | `Close` | `Close` |
 | Any | — | `Error(code, message)` | `ErrorCode` in `Response` |
@@ -275,6 +276,7 @@ message and no token.
  /srv/haotrannas/
    chunks/ab/cd/abcd…ef      one file per chunk, name = SHA-256 hex, never changed
    tmp/                      chunks being written
+   thumbnails/<device>/<file sha256>.jpg   small JPEGs the phone made (D-048); not backup data
    index.sqlite              all metadata (WAL mode)
    tls/server.key server.crt          server identity (clients pin its SHA-256)
    tls/device-ca.key device-ca.crt    signs device certificates at pairing

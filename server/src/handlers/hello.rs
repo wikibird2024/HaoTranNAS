@@ -1,10 +1,13 @@
-//! `Hello` → `HelloOk`: checks the protocol version and tells the client
-//! whether it is paired on this connection (`device_id` 0 = not paired).
+//! `Hello` → `HelloOk`: checks the protocol version (1 or 2; the
+//! connection speaks the client's) and tells the client whether it is
+//! paired on this connection (`device_id` 0 = not paired).
 //! A client certificate the catalog does not know (never paired, or
 //! revoked) gets `NOT_PAIRED` (fatal, spec §6).
 
 use haotrannas_core::error_code::ErrorCode;
-use haotrannas_core::limits::{CHUNK_SIZE_BYTES, MAX_FRAME_LENGTH_BYTES, PROTOCOL_VERSION};
+use haotrannas_core::limits::{
+    CHUNK_SIZE_BYTES, MAX_FRAME_LENGTH_BYTES, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+};
 use haotrannas_core::message::Message;
 use haotrannas_core::session::SessionState;
 
@@ -37,11 +40,12 @@ pub fn handle_hello(
     server_identity: &ServerIdentity,
     peer_identity: PeerIdentity,
 ) -> Result<(Message, SessionState), (ErrorCode, String)> {
-    if protocol_version != PROTOCOL_VERSION {
+    if !(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&protocol_version) {
         return Err((
             ErrorCode::VersionMismatch,
             format!(
-                "client speaks protocol version {protocol_version}, this server speaks {PROTOCOL_VERSION}"
+                "client speaks protocol version {protocol_version}, this server speaks \
+                 {MIN_PROTOCOL_VERSION} to {PROTOCOL_VERSION}"
             ),
         ));
     }
@@ -57,7 +61,8 @@ pub fn handle_hello(
         }
     };
     let reply = Message::HelloOk {
-        protocol_version: PROTOCOL_VERSION,
+        // The connection speaks the client's version (spec §6).
+        protocol_version,
         server_software: server_identity.server_software.clone(),
         server_name: server_identity.server_name.clone(),
         device_id: paired_device_id.unwrap_or(0),
@@ -80,7 +85,7 @@ mod tests {
         assert_eq!(
             reply,
             Message::HelloOk {
-                protocol_version: 1,
+                protocol_version: 2,
                 server_software: format!("haotrannas-server/{}", env!("CARGO_PKG_VERSION")),
                 server_name: "attic".to_owned(),
                 device_id: 1,
@@ -112,9 +117,23 @@ mod tests {
     }
 
     #[test]
+    fn version_one_client_still_works_and_gets_version_one() {
+        let identity = ServerIdentity::new("attic".to_owned());
+        let (reply, state) = handle_hello(1, &identity, PeerIdentity::Device(1)).unwrap();
+        assert_eq!(state, SessionState::Ready);
+        assert!(matches!(
+            reply,
+            Message::HelloOk {
+                protocol_version: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn other_version_is_refused() {
         let identity = ServerIdentity::new("attic".to_owned());
-        for version in [0, 2, u16::MAX] {
+        for version in [0, 3, u16::MAX] {
             let (code, message) =
                 handle_hello(version, &identity, PeerIdentity::Device(1)).unwrap_err();
             assert_eq!(code, ErrorCode::VersionMismatch);

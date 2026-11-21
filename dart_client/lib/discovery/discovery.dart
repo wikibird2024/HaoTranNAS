@@ -22,13 +22,20 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../core/transport/mdns_socket.dart';
+import '../protocol/limits.dart' show protocolVersion;
 import 'dns_codec.dart';
 
 /// The service name from spec §13.
 const serviceName = '_haotrannas._tcp.local';
 
-/// The only TXT `v` this app speaks.
-const supportedProtocolVersion = 1;
+/// The TXT `v` as a number when this app can talk to that server, else
+/// null. `v` is the lowest version the server accepts (spec §13, D-048), so
+/// a server is usable while `v` ≤ the app's [protocolVersion].
+int? usableAnnouncedVersion(String? text) {
+  final version = int.tryParse(text ?? '');
+  if (version == null || version < 1 || version > protocolVersion) return null;
+  return version;
+}
 
 /// Length of the TXT `fp` value: first 16 lowercase hex chars of the
 /// server certificate's SHA-256 fingerprint.
@@ -250,9 +257,9 @@ class _AnswerCollector {
       final address = _ipv4ByHost[service.host];
       if (address == null) continue;
       final values = parseTxtValues(texts);
-      final version = values['v'];
+      final version = usableAnnouncedVersion(values['v']);
       final fingerprintPrefix = values['fp']?.toLowerCase();
-      if (version != '$supportedProtocolVersion') continue;
+      if (version == null) continue;
       if (fingerprintPrefix == null ||
           !_isFingerprintPrefix(fingerprintPrefix)) {
         continue;
@@ -266,7 +273,7 @@ class _AnswerCollector {
           ),
           port: service.port,
           fingerprintPrefix: fingerprintPrefix,
-          protocolVersion: supportedProtocolVersion,
+          protocolVersion: version,
         ),
       );
     }

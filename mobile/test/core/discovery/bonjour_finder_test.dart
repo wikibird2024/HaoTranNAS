@@ -46,7 +46,7 @@ void main() {
       port: port,
       attributes: attributes,
     );
-    expect(check(attributes: {'v': '2', 'fp': '3f9ac21b77e00607'}), isNull);
+    expect(check(attributes: {'v': '3', 'fp': '3f9ac21b77e00607'}), isNull);
     expect(check(attributes: {'v': '1', 'fp': 'xyz'}), isNull);
     expect(check(attributes: {'v': '1'}), isNull);
     expect(check(addresses: ['fe80::1']), isNull);

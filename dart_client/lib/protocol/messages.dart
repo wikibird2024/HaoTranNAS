@@ -38,6 +38,10 @@ abstract final class MessageType {
   static const fileManifest = 0x0402;
   static const readChunk = 0x0403;
   static const chunkContent = 0x0404;
+  static const putThumbnail = 0x0501;
+  static const thumbnailOk = 0x0502;
+  static const readThumbnail = 0x0503;
+  static const thumbnail = 0x0504;
   static const close = 0x00f0;
   static const error = 0x00ff;
 
@@ -63,6 +67,10 @@ abstract final class MessageType {
     fileManifest,
     readChunk,
     chunkContent,
+    putThumbnail,
+    thumbnailOk,
+    readThumbnail,
+    thumbnail,
     close,
     error,
   ];
@@ -636,6 +644,79 @@ final class ChunkContent extends Message {
     'chunkSha256': chunkSha256,
     'data': data,
   };
+}
+
+// ── Thumbnails (version 2, spec §16) ───────────────────────────────────
+
+/// A small JPEG for a file this device has backed up.
+final class PutThumbnail extends Message {
+  const PutThumbnail({required this.fileSha256, required this.jpegData});
+
+  /// The backed-up file's SHA-256.
+  final Uint8List fileSha256;
+
+  /// At most `maxThumbnailBytes` (spec §16).
+  final Uint8List jpegData;
+
+  @override
+  int get messageType => MessageType.putThumbnail;
+  @override
+  String get messageName => 'PutThumbnail';
+  @override
+  Map<String, Object?> get _fields => {
+    'fileSha256': fileSha256,
+    'jpegData': jpegData,
+  };
+}
+
+final class ThumbnailOk extends Message {
+  const ThumbnailOk();
+
+  @override
+  int get messageType => MessageType.thumbnailOk;
+  @override
+  String get messageName => 'ThumbnailOk';
+  @override
+  Map<String, Object?> get _fields => const {};
+}
+
+final class ReadThumbnail extends Message {
+  const ReadThumbnail({
+    required this.deviceId,
+    required this.path,
+    required this.versionId,
+  });
+
+  /// 0 = the asking device.
+  final int deviceId;
+  final String path;
+
+  /// 0 = latest.
+  final int versionId;
+
+  @override
+  int get messageType => MessageType.readThumbnail;
+  @override
+  String get messageName => 'ReadThumbnail';
+  @override
+  Map<String, Object?> get _fields => {
+    'deviceId': deviceId,
+    'path': path,
+    'versionId': versionId,
+  };
+}
+
+final class Thumbnail extends Message {
+  const Thumbnail({required this.jpegData});
+
+  final Uint8List jpegData;
+
+  @override
+  int get messageType => MessageType.thumbnail;
+  @override
+  String get messageName => 'Thumbnail';
+  @override
+  Map<String, Object?> get _fields => {'jpegData': jpegData};
 }
 
 // ── Connection ────────────────────────────────────────────────────────

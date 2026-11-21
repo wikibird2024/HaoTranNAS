@@ -429,7 +429,7 @@ void main() {
 class _NamedConnection implements NasConnection {
   _NamedConnection(String serverName)
     : helloOk = HelloOk(
-        protocolVersion: 1,
+        protocolVersion: 2,
         serverSoftware: 'test',
         serverName: serverName,
         deviceId: 3,

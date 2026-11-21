@@ -185,7 +185,7 @@ void main() {
     test('HelloOk with another device id: maybeNotPaired', () async {
       fake.answer = (server, host, request) => request is Hello
           ? const HelloOk(
-              protocolVersion: 1,
+              protocolVersion: 2,
               serverSoftware: 'x',
               serverName: 'nas',
               deviceId: 2,

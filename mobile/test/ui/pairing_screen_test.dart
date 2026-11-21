@@ -182,7 +182,7 @@ void main() {
           ipv4Address: InternetAddress('192.168.1.9'),
           port: 47100,
           fingerprintPrefix: '3f9ac21b77e00607',
-          protocolVersion: 1,
+          protocolVersion: 2,
         ),
       ],
     );

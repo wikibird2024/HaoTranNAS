@@ -1,6 +1,8 @@
-# HaoTranNAS protocol — version 1
+# HaoTranNAS protocol — version 2
 
-Author: Hao Tran · Status: **Frozen** (tag `protocol-v1`, approved by Hao Tran 2026-11-18)
+Author: Hao Tran · Status: version 1 **frozen** (tag `protocol-v1`, approved by Hao Tran
+2026-11-18). Version 2 = version 1 + photo thumbnails (section 16, D-048), 🟡 draft
+since 2026-11-21 until the phone check passes.
 
 This file is the contract. The Rust codec (`core/`) and the Dart codec
 (`mobile/lib/protocol/`) are two independent implementations of it. The test
@@ -99,6 +101,10 @@ reply is request + 1. `Close` and `Error` are the two exceptions.
 | `0x0402` | FileManifest | S→C | `version_id u64` · `size_bytes u64` · `modified_time_ms i64` · `file_sha256 hash` · `chunk_hashes list<hash>` |
 | `0x0403` | ReadChunk | C→S | `chunk_sha256 hash` |
 | `0x0404` | ChunkContent | S→C | `chunk_sha256 hash` · `data bytes` |
+| `0x0501` | PutThumbnail | C→S | `file_sha256 hash` · `jpeg_data bytes` (v2 only, section 16) |
+| `0x0502` | ThumbnailOk | S→C | (empty) (v2 only) |
+| `0x0503` | ReadThumbnail | C→S | `device_id u64` (0 = caller) · `path str` · `version_id u64` (0 = latest) (v2 only) |
+| `0x0504` | Thumbnail | S→C | `jpeg_data bytes` (v2 only) |
 | `0x00F0` | Close | both | `reason u16` · `message str` |
 | `0x00FF` | Error | S→C | `code u16` · `message str` |
 
@@ -119,11 +125,12 @@ FileOffer with 65 536 hashes ≈ 2.1 MB. Both fit under the 4 MiB limit.
 |---|---|---|
 | AwaitingHello | Hello | `UNEXPECTED_MESSAGE` (fatal) |
 | Unpaired | PairRequest, Ping, Close | Ready-only requests → `NOT_PAIRED` (fatal); Hello → `UNEXPECTED_MESSAGE` (fatal) |
-| Ready | Ping, FileOffer, ChunkData, Commit, ListDevices, ListDir, ReadFile, ReadChunk, Close | Hello, PairRequest → `UNEXPECTED_MESSAGE` (fatal) |
+| Ready | Ping, FileOffer, ChunkData, Commit, ListDevices, ListDir, ReadFile, ReadChunk, Close; on a version 2 connection also PutThumbnail, ReadThumbnail | Hello, PairRequest → `UNEXPECTED_MESSAGE` (fatal); PutThumbnail, ReadThumbnail on a version 1 connection → `UNEXPECTED_MESSAGE` (fatal) |
 
 | Event | Server action |
 |---|---|
-| Hello with another `protocol_version` | `Error VERSION_MISMATCH` (fatal) |
+| Hello with `protocol_version` 1 or 2 (`MIN_PROTOCOL_VERSION ..= PROTOCOL_VERSION`) | Accepted. The connection speaks that version, and HelloOk carries it back |
+| Hello with any other `protocol_version` | `Error VERSION_MISMATCH` (fatal) |
 | Hello, client cert present, fingerprint in `devices` | HelloOk with that `device_id` → Ready |
 | Hello, client cert present, fingerprint unknown (revoked) | `Error NOT_PAIRED` (fatal) |
 | Hello, no client cert | HelloOk with `device_id = 0` → Unpaired |
@@ -306,14 +313,15 @@ An unknown reason received is shown as `UNKNOWN(<reason>)`, not malformed.
 |---|---|
 | Service | `_haotrannas._tcp.local` |
 | Port | The server's TLS port |
-| TXT | `v=1`, `fp=<first 16 lowercase hex chars of the server fingerprint>` |
-| Client | Accept a result only if `fp` matches the pinned fingerprint. Use the IPv4 (A record) address: the NAS firewall opens the port on IPv4 only. Then connect and check the full pin |
+| TXT | `v=<MIN_PROTOCOL_VERSION>` (the lowest Hello version the server accepts, so `v=1` today), `fp=<first 16 lowercase hex chars of the server fingerprint>` |
+| Client | Accept a result only if `v` ≤ the client's `PROTOCOL_VERSION` and `fp` matches the pinned fingerprint. Use the IPv4 (A record) address: the NAS firewall opens the port on IPv4 only. Then connect and check the full pin |
 
 ## 14. Limits (same names in Rust `core/src/limits.rs` and Dart `lib/protocol/limits.dart`)
 
 | Name | Value |
 |---|---|
-| PROTOCOL_VERSION | 1 |
+| PROTOCOL_VERSION | 2 |
+| MIN_PROTOCOL_VERSION | 1 |
 | FRAME_HEADER_BYTES | 10 |
 | MIN_FRAME_LENGTH_BYTES | 6 |
 | MAX_FRAME_LENGTH_BYTES | 4 194 304 |
@@ -335,6 +343,8 @@ An unknown reason received is shown as `UNKNOWN(<reason>)`, not malformed.
 | CONNECT_TIMEOUT_MS | 3 000 |
 | COMMIT_TIMEOUT_BASE_MS | 30 000 |
 | COMMIT_MIN_HASH_BYTES_PER_SECOND | 20 971 520 (20 MiB/s) |
+| MAX_THUMBNAIL_BYTES | 65 536 |
+| THUMBNAIL_MAX_SIDE_PX | 256 |
 
 Component length (255 bytes) is a path rule, not a shared limit constant.
 
@@ -360,3 +370,31 @@ Every implementation must, for each valid vector, decode the joined bytes to
 exactly `fields` and encode `fields` to exactly the bytes; and for each invalid
 vector, reject it with `MALFORMED_FRAME`. It must also decode all valid frames
 concatenated and fed in random-sized pieces (fixed seed) to the same messages.
+
+## 16. Thumbnails (version 2, D-048)
+
+A small JPEG picture per backed-up photo or video, so the Files screen can
+show pictures instead of names. **The phone makes it**, at backup, from the
+picture it already has. The server stores bytes and never decodes an image.
+
+```
+ backup:  … CommitOk (or NeedChunks with existing_version_id ≠ 0)
+          PutThumbnail(file_sha256, jpeg) ──► ThumbnailOk
+ browse:  ListDir ──► for each photo: ReadThumbnail(device, path, version) ──► Thumbnail | NOT_FOUND
+```
+
+| Message | Server checks, in order | Error |
+|---|---|---|
+| PutThumbnail | `jpeg_data` is 1 ..= `MAX_THUMBNAIL_BYTES` bytes and starts with `FF D8 FF` (the JPEG start marker) | `BAD_ARGUMENT` |
+| | The caller has a committed version (any path) whose `file_sha256` is this one | `NOT_FOUND` |
+| | Store atomically (temp file, fsync, rename), keyed by (caller's `device_id`, `file_sha256`); a newer one replaces the older | `DISK_FULL`, `INTERNAL` |
+| ReadThumbnail | Find the version like ReadFile (section 9) | `NOT_FOUND` |
+| | The thumbnail stored for (that file's device, that version's `file_sha256`) | `NOT_FOUND` when there is none |
+
+| Rule | Value |
+|---|---|
+| Format | Baseline JPEG; the longest side **should** be at most `THUMBNAIL_MAX_SIDE_PX` |
+| Best effort | A thumbnail that cannot be made or sent never fails a backup. The client logs it and goes on |
+| Old backups | Files committed before the client spoke version 2 have no thumbnail until they are offered again |
+| Delete | Thumbnails are not file data: losing one loses no backup. Cleanup may remove one whose `file_sha256` no longer has a version on that device |
+

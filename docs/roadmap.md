@@ -22,6 +22,7 @@ Status lights: 🟢 done and checked · 🟡 in progress · ⚪ not started · �
 | Roadmap, decisions, conventions | 🟢 |
 | First commit + push | 🟢 |
 | Protocol spec v1 + vectors (`protocol/`) | 🟢 frozen, tag `protocol-v1` |
+| Protocol v2 = v1 + photo thumbnails (spec §16, D-048) | 🟡 2026-11-21 spec, vectors, both codecs; server store and phone screens next; ⚪ phone check |
 | Rust workspace + Flutter app + NAS script scaffolds | 🟢 CI green |
 
 ## Milestones

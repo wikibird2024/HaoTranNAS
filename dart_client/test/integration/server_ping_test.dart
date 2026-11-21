@@ -31,7 +31,7 @@ void main() {
         log: log,
       );
       expect(connection.helloOk.deviceId, 1, reason: 'dev mode = device 1');
-      expect(connection.helloOk.protocolVersion, 1);
+      expect(connection.helloOk.protocolVersion, 2);
 
       for (var attempt = 1; attempt <= 3; attempt++) {
         final roundTrip = await connection.ping();

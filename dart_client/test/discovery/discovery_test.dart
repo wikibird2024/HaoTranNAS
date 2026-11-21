@@ -244,9 +244,16 @@ void main() {
       expect(await discoverWithTexts(['v=1']), isEmpty);
     });
 
-    test('v=2 → dropped, missing v → dropped', () async {
-      expect(await discoverWithTexts(['v=2', 'fp=$fingerprint']), isEmpty);
+    test('v=3 (newer than the app) → dropped, missing v → dropped', () async {
+      expect(await discoverWithTexts(['v=3', 'fp=$fingerprint']), isEmpty);
+      expect(await discoverWithTexts(['v=0', 'fp=$fingerprint']), isEmpty);
+      expect(await discoverWithTexts(['v=x', 'fp=$fingerprint']), isEmpty);
       expect(await discoverWithTexts(['fp=$fingerprint']), isEmpty);
+    });
+
+    test('v=2 (a server that needs version 2) → found (D-048)', () async {
+      final servers = await discoverWithTexts(['v=2', 'fp=$fingerprint']);
+      expect(servers.single.protocolVersion, 2);
     });
 
     test('fp= empty, fp too short or not hex → dropped', () async {
@@ -259,12 +266,12 @@ void main() {
       final servers = await discoverWithTexts([
         'v=1',
         'fp=$fingerprint',
-        'v=2',
+        'v=3',
         'fp=$otherFingerprint',
       ]);
       expect(servers.single.fingerprintPrefix, fingerprint);
       expect(
-        await discoverWithTexts(['v=2', 'v=1', 'fp=$fingerprint']),
+        await discoverWithTexts(['v=3', 'v=1', 'fp=$fingerprint']),
         isEmpty,
       );
     });

@@ -8,7 +8,7 @@ import 'package:haotrannas_client/protocol/frame_assembler.dart';
 import 'package:haotrannas_client/protocol/messages.dart';
 
 const testHelloOk = HelloOk(
-  protocolVersion: 1,
+  protocolVersion: 2,
   serverSoftware: 'haotrannas-server 0.1.0',
   serverName: 'nas',
   deviceId: 1,

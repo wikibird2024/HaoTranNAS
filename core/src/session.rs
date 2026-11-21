@@ -101,7 +101,19 @@ pub const fn is_ready_only(message_type: MessageType) -> bool {
             | MessageType::ListDir
             | MessageType::ReadFile
             | MessageType::ReadChunk
+            | MessageType::PutThumbnail
+            | MessageType::ReadThumbnail
     )
+}
+
+/// The lowest protocol version in which a client may send `message_type`
+/// (spec section 6): 2 for the thumbnail requests, 1 for the rest. A
+/// request on an older connection is `UNEXPECTED_MESSAGE` (fatal).
+pub const fn first_protocol_version(message_type: MessageType) -> u16 {
+    match message_type {
+        MessageType::PutThumbnail | MessageType::ReadThumbnail => 2,
+        _ => 1,
+    }
 }
 
 #[cfg(test)]
@@ -125,7 +137,7 @@ mod tests {
 
     /// Spec section 6 written out by hand, one row per message type.
     /// Columns: `AwaitingHello`, `Unpaired`, `Ready`, `Closed`.
-    const SPEC_TABLE: [(MessageType, [Expected; 4]); 22] = [
+    const SPEC_TABLE: [(MessageType, [Expected; 4]); 26] = [
         (
             MessageType::Hello,
             [Allowed, Unexpected, Unexpected, Unexpected],
@@ -207,6 +219,22 @@ mod tests {
             [Unexpected, Unexpected, Unexpected, Unexpected],
         ),
         (
+            MessageType::PutThumbnail,
+            [Unexpected, NotPaired, Allowed, Unexpected],
+        ),
+        (
+            MessageType::ThumbnailOk,
+            [Unexpected, Unexpected, Unexpected, Unexpected],
+        ),
+        (
+            MessageType::ReadThumbnail,
+            [Unexpected, NotPaired, Allowed, Unexpected],
+        ),
+        (
+            MessageType::Thumbnail,
+            [Unexpected, Unexpected, Unexpected, Unexpected],
+        ),
+        (
             MessageType::Close,
             [Unexpected, Allowed, Allowed, Unexpected],
         ),
@@ -255,6 +283,22 @@ mod tests {
                     assert!(code.is_fatal(), "{state:?} + {}", message_type.name());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn only_thumbnail_requests_need_version_two() {
+        for message_type in MessageType::ALL {
+            let expected = match message_type {
+                MessageType::PutThumbnail | MessageType::ReadThumbnail => 2,
+                _ => 1,
+            };
+            assert_eq!(
+                super::first_protocol_version(message_type),
+                expected,
+                "{}",
+                message_type.name()
+            );
         }
     }
 

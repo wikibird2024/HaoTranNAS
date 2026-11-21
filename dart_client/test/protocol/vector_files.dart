@@ -165,6 +165,21 @@ Message messageFromVector(Map<String, dynamic> vector) {
         chunkSha256: bytes('chunk_sha256'),
         data: bytes('data'),
       );
+    case 'PutThumbnail':
+      return PutThumbnail(
+        fileSha256: bytes('file_sha256'),
+        jpegData: bytes('jpeg_data'),
+      );
+    case 'ThumbnailOk':
+      return const ThumbnailOk();
+    case 'ReadThumbnail':
+      return ReadThumbnail(
+        deviceId: bigNumber('device_id'),
+        path: text('path'),
+        versionId: bigNumber('version_id'),
+      );
+    case 'Thumbnail':
+      return Thumbnail(jpegData: bytes('jpeg_data'));
     case 'Close':
       return Close(reason: number('reason'), message: text('message'));
     case 'Error':

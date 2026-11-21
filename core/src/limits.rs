@@ -2,8 +2,12 @@
 //!
 //! The protocol spec uses the same names and values. Change both together.
 
-/// Protocol version sent in `Hello`; a peer with another version is refused.
-pub const PROTOCOL_VERSION: u16 = 1;
+/// Protocol version this side speaks and sends in `Hello` (2 = v1 +
+/// thumbnails, spec §16).
+pub const PROTOCOL_VERSION: u16 = 2;
+/// Lowest `Hello` version a server accepts; also the mDNS `v=` value, so
+/// older apps still find a newer server (D-048).
+pub const MIN_PROTOCOL_VERSION: u16 = 1;
 
 /// Frame header size: length (u32) + message type (u16) + request id (u32).
 pub const FRAME_HEADER_BYTES: usize = 10;
@@ -68,6 +72,10 @@ pub const COMMIT_TIMEOUT_BASE_MS: u64 = 30_000;
 /// Slowest re-hash speed a client allows for at `Commit`: the server
 /// re-reads every chunk, and a busy spinning disk can be this slow.
 pub const COMMIT_MIN_HASH_BYTES_PER_SECOND: u64 = 20 * 1_048_576;
+/// Largest thumbnail the server stores, in bytes (spec §16).
+pub const MAX_THUMBNAIL_BYTES: usize = 65_536;
+/// Longest side a client should give a thumbnail, in pixels (spec §16).
+pub const THUMBNAIL_MAX_SIDE_PX: u32 = 256;
 
 /// How long a client waits for `CommitOk` for a file of `size_bytes`:
 /// [`COMMIT_TIMEOUT_BASE_MS`] plus the time to re-read the file at
