@@ -70,3 +70,4 @@ Don't start these before the trigger happens. This list stops scope creep.
 | QR-code or PAKE pairing; phone-made key + CSR | Syncthing, Signal | Pairing outside a trusted home LAN |
 | Web UI | Immich | M7 done and still wanted |
 | Photo search / AI | Immich | Never in this project; use Immich if needed |
+| HaoTran ecosystem: ID + Kit, then one app at a time (`docs/ecosystem.md`, O-5) | Apple / Google ecosystems | M3n, M4–M6, M8 and M9 checks all passed |

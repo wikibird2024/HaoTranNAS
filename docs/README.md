@@ -13,6 +13,7 @@ Author: Hao Tran · 2026-11-18
 | 5 | [conventions.md](conventions.md) | Rules that keep every sub-project in the same shape |
 | 6 | [community-research.md](community-research.md) | Who else does this, and what we borrowed |
 | 7 | [build-log.md](build-log.md) | What was built in each wave, and why (the lessons) |
+| 8 | [ecosystem.md](ecosystem.md) | Where could this grow later? (parked idea) |
 
 ## One topic, one home
 
@@ -25,5 +26,6 @@ Each fact lives in exactly one place. Other docs link to it instead of copying i
 | Plan and status | `docs/roadmap.md` |
 | Decisions | `docs/decisions.md` |
 | Working rules | `docs/conventions.md` |
+| Ecosystem idea (parked) | `docs/ecosystem.md` |
 | Wire format and messages | `protocol/spec.md` + `protocol/vectors/` |
 | How to build / run / test a part | `<sub-project>/README.md` |

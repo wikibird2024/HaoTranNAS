@@ -68,6 +68,7 @@ Rules:
 | ~~O-2~~ | Closed 2026-11-18: Protocol Lab speaks many protocols; we reuse its patterns and its mDNS code, not a protocol (D-016) | — |
 | ~~O-3~~ | Closed 2026-11-19: a mini PC running Linux (model and disks still to pick in M3n) | — |
 | ~~O-4~~ | Closed 2026-11-19: Linux first; backup + browse/restore + NAS admin (D-039, D-041) | — |
+| O-5 | Grow into a HaoTran ecosystem (`docs/ecosystem.md`)? If yes: does one HaoTran ID replace per-app pairing, and which app comes after Files sync? | Nothing now; the "Later" row in `roadmap.md` |
 
 ## Template for a new decision
 
