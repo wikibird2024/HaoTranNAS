@@ -265,6 +265,7 @@ These cannot run in CI or on the dev machine; do them on a real phone.
 | ⚪ 9-minute stop + resume | First backup of many GB in the background | Each run stops before 10 min; next run sends only the missing chunks (server log) |
 | ⚪ No mDNS in the background | Server moved to a new IP, phone locked | Background run fails "server not reachable"; opening the app (mDNS) fixes the address |
 | ⚪ App and job at the same time | Tap "Back up now" while the job runs | "A backup is already running (in the background)" |
+| ⚪ Battery saver exemption (D-047) | Turn "Automatic backup" off and on; then Settings | System dialog "Let app always run in background?"; after Allow, Settings shows "Battery saver: allowed"; app info → Battery shows "Unrestricted" |
 | ⚪ Battery | One day with auto backup on, nothing new to back up | Battery use of the app is noted (each run scans the library and does not connect) |
 | ⚪ Check backup heals | Damage a chunk on the NAS, run scrub, then "Check backup" on the phone | Last check shows 1 wrong (repaired); scrub is clean again (M6 Done when) |
 | ⚪ mDNS discovery on Wi-Fi | Open pairing on the same Wi-Fi as the server | Server is found (multicast lock held), not only by typed address |

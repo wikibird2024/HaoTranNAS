@@ -22,6 +22,7 @@ import 'package:haotrannas_client/backup/backup_status_source.dart';
 import 'package:haotrannas_client/discovery/discovery.dart';
 
 import '../backup/background.dart';
+import '../backup/battery.dart';
 import '../backup/gallery.dart';
 import '../backup/photo_media_source.dart';
 import '../core/discovery/bonjour_finder.dart';
@@ -29,6 +30,7 @@ import '../core/transport/multicast_lock.dart';
 
 export 'package:haotrannas_client/app/client_providers.dart';
 
+export '../backup/battery.dart';
 export '../backup/gallery.dart' show AddToGallery, addToPhoneGallery;
 
 /// Sent in Hello (`client_software`); `main()` puts it in
@@ -39,6 +41,10 @@ const appClientSoftware = 'haotrannas-mobile 0.1.0';
 /// not Android) = restored files stay only in the app's folder. `main()`
 /// overrides it with [addToPhoneGallery] on Android.
 final addToGalleryProvider = Provider<AddToGallery?>((ref) => null);
+
+/// The battery saver exemption (D-047). Null (tests, not Android) = no
+/// tile and no question. `main()` overrides it on Android.
+final batteryExemptionProvider = Provider<BatteryExemption?>((ref) => null);
 
 /// Opens this app's page in the phone's Settings (photo access). Null
 /// (tests) = no button. `main()` overrides it with photo_manager's

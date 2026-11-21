@@ -63,6 +63,19 @@ class FakeServerConnection extends ServerConnectionController {
   Future<void> disconnect() async {}
 }
 
+class FakeBatteryExemption implements BatteryExemption {
+  FakeBatteryExemption({required this.isExemptNow});
+
+  bool isExemptNow;
+  int askCalls = 0;
+
+  @override
+  Future<bool> isExempt() async => isExemptNow;
+
+  @override
+  Future<void> ask() async => askCalls++;
+}
+
 class FakeBackupSource extends ChangeNotifier implements BackupStatusSource {
   int runNowCalls = 0;
   int verifyAllCalls = 0;

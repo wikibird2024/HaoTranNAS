@@ -129,7 +129,7 @@ package `dart_client/` (D-040), so the PC app (M7) runs the same client:
  Screens: Pairing (searches Wi-Fi on open) ─► Home with 3 tabs:
           Backup (headline "Backed up?", live numbers, Stop, auto on/off, folders, last check)
           · Files (this phone first ─► folders ─► restore: photo/video ─► gallery, D-042)
-          · Settings (Wi-Fi/charging for auto backup, unpair; Advanced: debug log)
+          · Settings (Wi-Fi/charging for auto backup, battery saver tile, unpair; Advanced: debug log)
 ```
 
 | Rule | Why |
@@ -139,6 +139,7 @@ package `dart_client/` (D-040), so the PC app (M7) runs the same client:
 | The app and the "Back up now" job run in different isolates: progress goes job → app through workmanager, Stop goes app → job through the `stop_requested` value (D-038) | The job outlives the app screen |
 | Backup state, settings, last reports and a run lock live in one SQLite file (D-033) | The app and the background job share it; the lock stops both uploading at once |
 | "Back up now" ignores the Wi-Fi/charging settings; they shape only the background job (D-034) | A tap is an explicit request |
+| Turning automatic backup on asks the battery saver to leave the app alone, once, unless already exempt (D-047) | Phone makers stop background jobs under battery optimization |
 | "Check backup" (verify) re-offers every backed-up file; the server asks for any chunk scrub marked bad (spec §8) | Repair without ZFS (M6) |
 | A restored photo or video goes into the gallery album `HaoTranNAS`; other files stay in the app (D-042) | A path inside the app's private folder is useless to the user |
 

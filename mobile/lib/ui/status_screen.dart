@@ -14,6 +14,8 @@
 /// ```
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -132,6 +134,13 @@ String _autoBackupText(BackupSettings settings) => !settings.isBackupOn
         if (settings.isChargingOnly) 'only while charging',
       ].join(' · ');
 
+/// Shows the system's battery dialog unless the app is already exempt.
+Future<void> _askBatteryIfNeeded(WidgetRef ref) async {
+  final exemption = ref.read(batteryExemptionProvider);
+  if (exemption == null || await exemption.isExempt()) return;
+  await exemption.ask();
+}
+
 class _BackupCard extends ConsumerWidget {
   const _BackupCard();
 
@@ -191,9 +200,11 @@ class _BackupCard extends ConsumerWidget {
                   title: const Text('Automatic backup'),
                   subtitle: Text(_autoBackupText(settings)),
                   value: settings.isBackupOn,
-                  onChanged: (isOn) => source.updateSettings(
-                    settings.copyWith(isBackupOn: isOn),
-                  ),
+                  onChanged: (isOn) {
+                    source.updateSettings(settings.copyWith(isBackupOn: isOn));
+                    // Android: the battery saver may stop the job (D-047).
+                    if (isOn) unawaited(_askBatteryIfNeeded(ref));
+                  },
                 ),
                 Wrap(
                   spacing: 8,

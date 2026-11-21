@@ -21,6 +21,10 @@
          app's own new files; Android 9 and older need this one. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- Ask the battery saver to leave automatic backup alone (D-047):
+         Samsung, Xiaomi and others stop background jobs otherwise. Google
+         Play limits this permission; the app is sideloaded from CI. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
     <application
         android:label="HaoTranNAS"

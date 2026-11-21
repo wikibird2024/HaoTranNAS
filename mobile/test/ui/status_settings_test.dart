@@ -257,6 +257,38 @@ void main() {
     });
   });
 
+  testWidgets('automatic backup on: asks the battery saver once', (
+    tester,
+  ) async {
+    final battery = FakeBatteryExemption(isExemptNow: false);
+    await pumpWithFakes(
+      tester,
+      const StatusScreen(),
+      extraOverrides: [batteryExemptionProvider.overrideWithValue(battery)],
+    );
+    await tester.pumpAndSettle();
+
+    // On → off: no question.
+    await tester.tap(find.byKey(const Key('backup.autoOn')));
+    await tester.pumpAndSettle();
+    expect(source.settings.isBackupOn, isFalse);
+    expect(battery.askCalls, 0);
+
+    // Off → on: asks.
+    await tester.tap(find.byKey(const Key('backup.autoOn')));
+    await tester.pumpAndSettle();
+    expect(source.settings.isBackupOn, isTrue);
+    expect(battery.askCalls, 1);
+
+    // Already exempt: no question.
+    battery.isExemptNow = true;
+    await tester.tap(find.byKey(const Key('backup.autoOn')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('backup.autoOn')));
+    await tester.pumpAndSettle();
+    expect(battery.askCalls, 1);
+  });
+
   testWidgets('home: coming back to the app connects again', (tester) async {
     await pumpWithFakes(tester, const HomeScreen());
     await tester.pumpAndSettle();
@@ -270,6 +302,35 @@ void main() {
   });
 
   group('settings', () {
+    testWidgets('battery tile: Allow asks, then shows allowed', (tester) async {
+      final battery = FakeBatteryExemption(isExemptNow: false);
+      await pumpWithFakes(
+        tester,
+        const SettingsScreen(),
+        extraOverrides: [batteryExemptionProvider.overrideWithValue(battery)],
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Battery saver may stop backups'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('settings.battery')));
+      expect(battery.askCalls, 1);
+
+      // The user allows it in the system dialog and comes back.
+      battery.isExemptNow = true;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('Battery saver: allowed'), findsOneWidget);
+    });
+
+    testWidgets('no battery exemption (iPhone, tests): no tile', (
+      tester,
+    ) async {
+      await pumpWithFakes(tester, const SettingsScreen());
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('settings.battery')), findsNothing);
+    });
+
     testWidgets('the NAS name shows once online', (tester) async {
       await pumpWithFakes(tester, const SettingsScreen());
       expect(find.text('My NAS'), findsOneWidget);

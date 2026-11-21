@@ -29,6 +29,10 @@ Future<void> main() async {
         ),
         if (Platform.isAndroid || Platform.isIOS)
           addToGalleryProvider.overrideWithValue(addToPhoneGallery),
+        if (Platform.isAndroid)
+          batteryExemptionProvider.overrideWithValue(
+            const PlatformBatteryExemption(),
+          ),
         if (Platform.isAndroid || Platform.isIOS)
           openAppSettingsProvider.overrideWithValue(PhotoManager.openSetting),
         backupStatusSourceProvider.overrideWith(

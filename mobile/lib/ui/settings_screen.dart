@@ -92,6 +92,7 @@ class SettingsScreen extends ConsumerWidget {
                   onChanged: (isOn) =>
                       update(settings.copyWith(isChargingOnly: isOn)),
                 ),
+                const _BatteryTile(),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
@@ -153,4 +154,65 @@ class _SectionTitle extends StatelessWidget {
           ?.copyWith(color: Theme.of(context).colorScheme.primary),
     ),
   );
+}
+
+/// Android only: is the battery saver allowed to stop automatic backup?
+/// Checks again when the user comes back from the system dialog (D-047).
+class _BatteryTile extends ConsumerStatefulWidget {
+  const _BatteryTile();
+
+  @override
+  ConsumerState<_BatteryTile> createState() => _BatteryTileState();
+}
+
+class _BatteryTileState extends ConsumerState<_BatteryTile> {
+  /// Null = not known yet.
+  bool? _isExempt;
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _check);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  Future<void> _check() async {
+    final exemption = ref.read(batteryExemptionProvider);
+    if (exemption == null) return;
+    final isExempt = await exemption.isExempt();
+    if (mounted) setState(() => _isExempt = isExempt);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final exemption = ref.watch(batteryExemptionProvider);
+    final isExempt = _isExempt;
+    if (exemption == null || isExempt == null) return const SizedBox.shrink();
+    if (isExempt) {
+      return const ListTile(
+        key: Key('settings.battery'),
+        leading: Icon(Icons.battery_full),
+        title: Text('Battery saver: allowed'),
+        subtitle: Text('Automatic backup may run in the background'),
+      );
+    }
+    return ListTile(
+      key: const Key('settings.battery'),
+      leading: Icon(
+        Icons.battery_alert,
+        color: Theme.of(context).colorScheme.error,
+      ),
+      title: const Text('Battery saver may stop backups'),
+      subtitle: const Text('Tap to let automatic backup run'),
+      trailing: const Text('Allow'),
+      onTap: exemption.ask,
+    );
+  }
 }
