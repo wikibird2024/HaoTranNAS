@@ -8,6 +8,7 @@ import 'package:haotrannas_client/backup/backup_status_source.dart';
 import 'package:haotrannas_mobile/app/app_start.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
 import 'package:haotrannas_mobile/ui/folders_screen.dart';
+import 'package:haotrannas_mobile/ui/home_screen.dart';
 import 'package:haotrannas_mobile/ui/settings_screen.dart';
 import 'package:haotrannas_mobile/ui/status_screen.dart';
 
@@ -252,6 +253,18 @@ void main() {
       expect(find.text('Open phone settings'), findsNothing);
       expect(find.text('Try again'), findsOneWidget);
     });
+  });
+
+  testWidgets('home: coming back to the app connects again', (tester) async {
+    await pumpWithFakes(tester, const HomeScreen());
+    await tester.pumpAndSettle();
+    // The Backup tab connects on open.
+    expect(connection.connectCalls, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(connection.connectCalls, 2);
   });
 
   group('settings', () {
