@@ -47,6 +47,11 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final source = ref.watch(backupStatusSourceProvider);
     final identity = ref.watch(identityProvider).value;
+    final link = ref.watch(serverConnectionProvider);
+    // The name comes from the NAS itself, so it is known only once online.
+    final serverName = link is ServerOnline
+        ? link.connection.helloOk.serverName
+        : 'My NAS';
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListenableBuilder(
@@ -99,7 +104,7 @@ class SettingsScreen extends ConsumerWidget {
               if (identity != null)
                 ListTile(
                   leading: const Icon(Icons.dns),
-                  title: const Text('Paired NAS'),
+                  title: Text(serverName),
                   subtitle: Text(
                     'Server id ${identity.serverShortId} · this phone is '
                     'device ${identity.deviceId}',

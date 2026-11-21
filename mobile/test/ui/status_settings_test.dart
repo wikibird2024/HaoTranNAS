@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:haotrannas_client/backup/backup_status_source.dart';
+import 'package:haotrannas_client/client/nas_connection.dart';
+import 'package:haotrannas_client/protocol/messages.dart';
 import 'package:haotrannas_mobile/app/app_start.dart';
 import 'package:haotrannas_mobile/app/providers.dart';
 import 'package:haotrannas_mobile/ui/folders_screen.dart';
@@ -268,6 +270,16 @@ void main() {
   });
 
   group('settings', () {
+    testWidgets('the NAS name shows once online', (tester) async {
+      await pumpWithFakes(tester, const SettingsScreen());
+      expect(find.text('My NAS'), findsOneWidget);
+
+      connection.state = ServerOnline(_NamedConnection('nas-attic'));
+      await tester.pumpAndSettle();
+      expect(find.text('nas-attic'), findsOneWidget);
+      expect(find.text('My NAS'), findsNothing);
+    });
+
     testWidgets('switches change the source settings', (tester) async {
       await pumpWithFakes(tester, const SettingsScreen());
       expect(source.settings.isWifiOnly, isTrue);
@@ -350,4 +362,23 @@ void main() {
       expect(find.text('Pair with your NAS'), findsOneWidget);
     });
   });
+}
+
+/// Online with a name and nothing else: Settings reads only [helloOk].
+class _NamedConnection implements NasConnection {
+  _NamedConnection(String serverName)
+    : helloOk = HelloOk(
+        protocolVersion: 1,
+        serverSoftware: 'test',
+        serverName: serverName,
+        deviceId: 3,
+        chunkSizeBytes: 1 << 20,
+        maxFrameLengthBytes: 1 << 22,
+      );
+
+  @override
+  final HelloOk helloOk;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
