@@ -16,6 +16,7 @@ use haotrannas_core::error_code::ErrorCode;
 use haotrannas_core::message::Message;
 use haotrannas_core::path_rules::validate_path;
 
+use crate::catalog::reader::VersionRecord;
 use crate::chunk_store::{ChunkStore, StoreError};
 use crate::handlers::browse::{ReadError, read_catalog, resolve_device};
 use crate::handlers::upload::UploadStorage;
@@ -37,6 +38,23 @@ pub async fn handle_read_file(
     caller_device_id: u64,
     request: ReadFileRequest,
 ) -> Result<Message, ReadError> {
+    let (_, version) = find_version(storage, caller_device_id, &request).await?;
+    Ok(Message::FileManifest {
+        version_id: version.version_id,
+        size_bytes: version.size_bytes,
+        modified_time_ms: version.modified_time_ms,
+        file_sha256: version.file_sha256,
+        chunk_hashes: version.chunk_hashes,
+    })
+}
+
+/// The version a `ReadFile` (or `ReadThumbnail`, spec §16) names, and the
+/// device that owns it: device 0 = caller, path rules, version 0 = latest.
+pub async fn find_version(
+    storage: &UploadStorage,
+    caller_device_id: u64,
+    request: &ReadFileRequest,
+) -> Result<(u64, VersionRecord), ReadError> {
     let device_id = resolve_device(storage, caller_device_id, request.device_id).await?;
     if let Err(path_error) = validate_path(&request.path) {
         return Err((ErrorCode::BadPath, path_error.to_string()));
@@ -62,13 +80,7 @@ pub async fn handle_read_file(
             format!("no {wanted} of {:?} on device {device_id}", request.path),
         ));
     };
-    Ok(Message::FileManifest {
-        version_id: version.version_id,
-        size_bytes: version.size_bytes,
-        modified_time_ms: version.modified_time_ms,
-        file_sha256: version.file_sha256,
-        chunk_hashes: version.chunk_hashes,
-    })
+    Ok((device_id, version))
 }
 
 /// How reading one chunk file went.

@@ -313,6 +313,31 @@ impl CatalogReader {
         )?)
     }
 
+    /// True if the device has a committed version (any path) of a file
+    /// with this SHA-256: the check before storing its thumbnail (spec §16).
+    ///
+    /// Cost: walks the device's files through `versions_by_file_id`, no
+    /// index on `file_sha256` (no schema change, so an older server can
+    /// still open the catalog). It runs once per uploaded file, far
+    /// cheaper than the upload itself.
+    pub fn device_has_file_sha256(
+        &self,
+        device_id: u64,
+        file_sha256: &[u8; HASH_BYTES],
+    ) -> Result<bool, CatalogError> {
+        let Ok(device_sql_id) = sql_integer(device_id) else {
+            return Ok(false);
+        };
+        let connection = self.open_connection()?;
+        Ok(connection.query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM files JOIN versions ON versions.file_id = files.id
+                 WHERE files.device_id = ?1 AND versions.file_sha256 = ?2)",
+            params![device_sql_id, file_sha256],
+            |row| row.get(0),
+        )?)
+    }
+
     /// True if the chunk may be sent in `ChunkContent` (spec §9): stored
     /// with status ok and named by a committed version. A chunk that only an
     /// open upload names is not readable.

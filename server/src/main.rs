@@ -25,6 +25,7 @@ mod mdns;
 mod pairing;
 mod restore;
 mod session;
+mod thumbnail_store;
 mod tls_identity;
 
 use std::io::Write;

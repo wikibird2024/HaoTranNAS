@@ -368,7 +368,7 @@ fn check_hash(hash: &ChunkHash, data: &[u8]) -> Result<(), StoreError> {
 }
 
 /// Creates a new file (fails if it exists), writes `data` and fsyncs it.
-fn write_and_sync_new_file(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn write_and_sync_new_file(path: &Path, data: &[u8]) -> io::Result<()> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -379,7 +379,7 @@ fn write_and_sync_new_file(path: &Path, data: &[u8]) -> io::Result<()> {
 }
 
 /// Creates one folder (not its parents), mode 0700 on unix.
-fn create_private_directory(path: &Path) -> io::Result<()> {
+pub(crate) fn create_private_directory(path: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, PRIVATE_DIRECTORY_MODE);
@@ -399,7 +399,7 @@ fn set_private_directory_mode(path: &Path) -> io::Result<()> {
 }
 
 /// Fsyncs a folder so a new or renamed entry in it survives a power cut.
-fn sync_directory(path: &Path) -> io::Result<()> {
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         File::open(path)?.sync_all()
